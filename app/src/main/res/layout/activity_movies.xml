@@ -6,7 +6,6 @@
     android:background="#0A0B10"
     android:orientation="vertical">
 
-    <!-- Top bar: animated gradient title + search button -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -42,26 +41,30 @@
             android:src="@drawable/ic_downloads" />
     </LinearLayout>
 
-    <!-- Search bar -->
-    <EditText
-        android:id="@+id/etSearch"
+    <FrameLayout
         android:layout_width="match_parent"
-        android:layout_height="44dp"
-        android:layout_marginStart="14dp"
-        android:layout_marginEnd="14dp"
-        android:layout_marginBottom="6dp"
-        android:background="@drawable/edittext_bg"
-        android:drawableStart="@android:drawable/ic_menu_search"
-        android:drawablePadding="8dp"
-        android:hint="Search movies, series, dramas…"
-        android:imeOptions="actionSearch"
-        android:inputType="text"
-        android:paddingStart="12dp"
-        android:paddingEnd="12dp"
-        android:singleLine="true"
-        android:textColor="#FFFFFF"
-        android:textColorHint="#777F95"
-        android:textSize="14sp" />
+        android:layout_height="wrap_content">
+
+        <EditText
+            android:id="@+id/etSearch"
+            android:layout_width="match_parent"
+            android:layout_height="44dp"
+            android:layout_marginStart="14dp"
+            android:layout_marginEnd="14dp"
+            android:layout_marginBottom="6dp"
+            android:background="@drawable/edittext_bg"
+            android:drawableStart="@android:drawable/ic_menu_search"
+            android:drawablePadding="8dp"
+            android:hint="Search movies, series, dramas…"
+            android:imeOptions="actionSearch"
+            android:inputType="text"
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp"
+            android:singleLine="true"
+            android:textColor="#FFFFFF"
+            android:textColorHint="#777F95"
+            android:textSize="14sp" />
+    </FrameLayout>
 
     <TextView
         android:id="@+id/tvStatus"
@@ -74,116 +77,73 @@
         android:textColor="#7C8AA5"
         android:textSize="12sp" />
 
-    <androidx.swiperefreshlayout.widget.SwipeRefreshLayout
-        android:id="@+id/swipeMovies"
+    <FrameLayout
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1">
 
-        <androidx.core.widget.NestedScrollView
+        <androidx.swiperefreshlayout.widget.SwipeRefreshLayout
+            android:id="@+id/swipeMovies"
             android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:fillViewport="true">
+            android:layout_height="match_parent">
 
-            <LinearLayout
+            <androidx.core.widget.NestedScrollView
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical">
-
-            <!-- Hero / featured banner -->
-            <FrameLayout
-                android:id="@+id/heroContainer"
-                android:layout_width="match_parent"
-                android:layout_height="220dp"
-                android:layout_marginStart="14dp"
-                android:layout_marginEnd="14dp"
-                android:layout_marginBottom="10dp"
-                android:background="#10121A">
-
-                <ImageView
-                    android:id="@+id/ivHero"
-                    android:layout_width="match_parent"
-                    android:layout_height="match_parent"
-                    android:scaleType="centerCrop" />
-
-                <View
-                    android:layout_width="match_parent"
-                    android:layout_height="120dp"
-                    android:layout_gravity="bottom"
-                    android:background="@drawable/hero_scrim" />
+                android:layout_height="match_parent"
+                android:fillViewport="true">
 
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_gravity="bottom"
-                    android:orientation="vertical"
-                    android:padding="12dp">
+                    android:orientation="vertical">
 
-                    <TextView
-                        android:id="@+id/tvHeroTitle"
+                    <androidx.recyclerview.widget.RecyclerView
+                        android:id="@+id/rvChips"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:maxLines="2"
-                        android:ellipsize="end"
-                        android:shadowColor="#80000000"
-                        android:shadowDx="0"
-                        android:shadowDy="1"
-                        android:shadowRadius="3"
-                        android:textColor="#FFFFFF"
-                        android:textSize="18sp"
-                        android:textStyle="bold" />
+                        android:layout_marginBottom="6dp"
+                        android:clipToPadding="false"
+                        android:paddingStart="8dp"
+                        android:paddingEnd="8dp" />
 
-                    <TextView
-                        android:id="@+id/tvHeroMeta"
+                    <ViewAnimator
+                        android:id="@+id/heroAnimator"
                         android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="2dp"
-                        android:maxLines="1"
-                        android:textColor="#B8B8B8"
-                        android:textSize="12sp" />
+                        android:layout_height="220dp"
+                        android:layout_marginStart="14dp"
+                        android:layout_marginEnd="14dp"
+                        android:layout_marginBottom="10dp"
+                        android:background="#10121A" />
 
                     <LinearLayout
+                        android:id="@+id/heroDots"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="8dp"
-                        android:orientation="horizontal">
+                        android:layout_gravity="center_horizontal"
+                        android:layout_marginBottom="10dp"
+                        android:orientation="horizontal" />
 
-                        <Button
-                            android:id="@+id/btnHeroPlay"
-                            android:layout_width="wrap_content"
-                            android:layout_height="34dp"
-                            android:background="@drawable/play_button_bg"
-                            android:minWidth="90dp"
-                            android:paddingStart="14dp"
-                            android:paddingEnd="14dp"
-                            android:text="Play"
-                            android:textAllCaps="false"
-                            android:textColor="#FFFFFF"
-                            android:textSize="13sp" />
+                    <FrameLayout
+                        android:id="@+id/suggestionsContainer"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:background="#1A1D29"
+                        android:visibility="gone">
 
-                        <Button
-                            android:id="@+id/btnHeroInfo"
-                            android:layout_width="wrap_content"
-                            android:layout_height="34dp"
-                            android:layout_marginStart="8dp"
-                            android:background="@drawable/pause_button_bg"
-                            android:minWidth="90dp"
-                            android:paddingStart="14dp"
-                            android:paddingEnd="14dp"
-                            android:text="Info"
-                            android:textAllCaps="false"
-                            android:textColor="#FFFFFF"
-                            android:textSize="13sp" />
-                    </LinearLayout>
+                        <androidx.recyclerview.widget.RecyclerView
+                            android:id="@+id/rvSuggestions"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:maxHeight="320dp" />
+                    </FrameLayout>
+
+                    <androidx.recyclerview.widget.RecyclerView
+                        android:id="@+id/rvMovies"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:nestedScrollingEnabled="false" />
                 </LinearLayout>
-            </FrameLayout>
-
-            <androidx.recyclerview.widget.RecyclerView
-                android:id="@+id/rvMovies"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:nestedScrollingEnabled="false" />
-        </LinearLayout>
-    </androidx.core.widget.NestedScrollView>
-    </androidx.swiperefreshlayout.widget.SwipeRefreshLayout>
+            </androidx.core.widget.NestedScrollView>
+        </androidx.swiperefreshlayout.widget.SwipeRefreshLayout>
+    </FrameLayout>
 </LinearLayout>

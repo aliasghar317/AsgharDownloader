@@ -326,10 +326,14 @@ class DownloadService : Service() {
         // in-app YouTube login (see CookieStore) we pass them through here so the
         // server treats us like a signed-in user.
         if (LinkParser.detectPlatform(url) == "YouTube") {
+            // Per the user request, prefer the android+web client pair. Both
+            // clients are known to work for plain 360p/720p downloads without
+            // a logged-in session.
             request.addOption(
                 "--extractor-args",
-                "youtube:player_client=web_safari,web,android_vr,ios,tv_embedded;formats=missing_pot"
+                "youtube:player_client=android,web,web_safari,android_vr,ios,tv_embedded;formats=missing_pot"
             )
+            // Override yt-dlp's default user-agent with a Chrome mobile one.
             request.addOption(
                 "--user-agent",
                 "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36"
@@ -337,6 +341,32 @@ class DownloadService : Service() {
             request.addOption(
                 "--add-header",
                 "Accept-Language:en-US,en;q=0.9"
+            )
+            // Force IPv4 to avoid the rare "Errno 7" on dual-stack networks
+            // that resolve AAAA records before A records.
+            request.addOption("--force-ipv4")
+            // Wider retries help with intermittent DNS / TLS timeouts on
+            // mobile networks.
+            request.addOption("--retries", "30")
+            request.addOption("--fragment-retries", "30")
+            request.addOption("--socket-timeout", "45")
+            // Imitate a normal browser by sending the Sec-Fetch-* headers
+            // that YouTube looks for.
+            request.addOption(
+                "--add-header",
+                "Sec-Fetch-Dest:document"
+            )
+            request.addOption(
+                "--add-header",
+                "Sec-Fetch-Mode:navigate"
+            )
+            request.addOption(
+                "--add-header",
+                "Sec-Fetch-Site:none"
+            )
+            request.addOption(
+                "--add-header",
+                "Sec-Fetch-User:?1"
             )
             if (CookieStore.hasCookies(this)) {
                 request.addOption("--cookies", CookieStore.cookiesFile(this).absolutePath)
