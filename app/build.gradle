@@ -33,7 +33,6 @@ tasks.named('preBuild').configure { dependsOn downloadLatestYtDlp }
 android {
     namespace 'com.asghar.downloader'
     compileSdk 34
-    buildToolsVersion '36.0.0'
 
     buildFeatures { viewBinding true }
 
