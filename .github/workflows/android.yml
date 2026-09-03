@@ -20,15 +20,15 @@ jobs:
         distribution: 'temurin'
         cache: gradle
 
+    # Install Android SDK with the exact build-tools version pinned in
+    # gradle.properties (android.aapt2FromMavenOverride points there).
     - name: Setup Android SDK
       uses: android-actions/setup-android@v3
       with:
-        api-level: '34'
-        # The project's gradle.properties pins android.aapt2FromMavenOverride
-        # to build-tools 36.0.0 so the same aapt2 binary works on aarch64 dev
-        # machines (via qemu) and on x86_64 CI runners (natively). Install the
-        # matching build-tools here.
-        build-tools-version: '36.0.0'
+        packages: |
+          platform-tools
+          platforms;android-34
+          build-tools;36.0.0
 
     - name: Grant execute permission for gradlew
       run: chmod +x gradlew
