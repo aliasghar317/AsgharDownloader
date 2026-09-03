@@ -6,41 +6,27 @@ import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
-import java.util.UUID
 
 /**
- * Thin client over MovieBox's public `api.inmoviebox.com` backend.
+ * Client for MovieBox's public web BFF at h5-api.aoneroom.com.
  *
- * The endpoints and the JSON shapes were derived by reading the
- * `com.community.mbox.in` (MovieBox 3.0.06.0804.03) APK and matching the
- * path prefixes under `/wefeed-mobile-bff/` that the app itself calls. The
- * server returns standard JSON; the data classes we map to are intentionally
- * flat to keep this layer maintenance-friendly.
+ * The endpoints and JSON shapes below were derived by reading the MovieBox
+ * web app (https://h5.inmoviebox.com) JS bundles. The home endpoint returns
+ * a list of "operating" sections under data.operatingList; each section
+ * has a `subjects` array with the full subject metadata.
+ *
+ * Stream URLs (subject/play → streams/dash/hls) are only filled for
+ * authenticated users; the public endpoint always returns empty arrays,
+ * so the UI must surface a "Sign in to watch" affordance instead of
+ * trying to play a missing URL.
  */
 object MovieBoxApi {
     private const val TAG = "MovieBoxApi"
-    private const val BASE = "https://api.inmoviebox.com/wefeed-mobile-bff"
-    private const val CDN  = "https://v.inmoviebox.com"
+    private const val BASE = "https://h5-api.aoneroom.com/wefeed-h5api-bff"
+    const val CDN_IMAGE = "https://pbcdnw.aoneroom.com"
+    const val PLAY_DOMAIN = "https://netfilm.world"
 
-    // Sent on every request so the backend treats us like a real Android
-    // install. The combination below matches what the official app uses.
-    private const val APP_VERSION = "3.0.06.0804.03"
-    private const val CLIENT_TYPE = "android"
-    private const val PKG = "com.community.mbox.in"
-    private const val LOCALE = "en_US"
-
-    private fun deviceId(): String {
-        // MovieBox expects a stable 19-digit device id. We use a random but
-        // persistent per-install value stored in shared prefs. The official
-        // app does the same dance with OAID.
-        val prefs = App.context.getSharedPreferences("moviebox", android.content.Context.MODE_PRIVATE)
-        var id = prefs.getString("device_id", null)
-        if (id == null) {
-            id = (1_000_000_000_000_000_000L + (Math.random() * 8_000_000_000_000_000_000L).toLong()).toString()
-            prefs.edit().putString("device_id", id).apply()
-        }
-        return id
-    }
+    private const val UA = "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36"
 
     private fun getJson(path: String, params: Map<String, String> = emptyMap()): JSONObject {
         val sb = StringBuilder(BASE).append(path)
@@ -49,23 +35,20 @@ object MovieBoxApi {
             params.entries.forEachIndexed { i, e ->
                 if (i > 0) sb.append('&')
                 sb.append(URLEncoder.encode(e.key, "UTF-8"))
-                  .append('=')
-                  .append(URLEncoder.encode(e.value, "UTF-8"))
+                    .append('=')
+                    .append(URLEncoder.encode(e.value, "UTF-8"))
             }
         }
         val url = URL(sb.toString())
         val c = url.openConnection() as HttpURLConnection
-        c.connectTimeout = 15000
-        c.readTimeout = 20000
+        c.connectTimeout = 12000
+        c.readTimeout = 18000
+        c.instanceFollowRedirects = true
         c.setRequestProperty("Accept", "application/json")
-        c.setRequestProperty("User-Agent", "MovieBox/$APP_VERSION (Linux; Android 13)")
-        c.setRequestProperty("X-Client-Type", CLIENT_TYPE)
-        c.setRequestProperty("X-App-Version", APP_VERSION)
-        c.setRequestProperty("X-Package", PKG)
-        c.setRequestProperty("X-Device-Id", deviceId())
-        c.setRequestProperty("X-Locale", LOCALE)
-        c.setRequestProperty("X-Platform", "android")
-        c.setRequestProperty("X-Request-Id", UUID.randomUUID().toString())
+        c.setRequestProperty("User-Agent", UA)
+        c.setRequestProperty("X-Request-Lang", "en")
+        c.setRequestProperty("X-Client-Info", "android")
+        c.setRequestProperty("Referer", "https://h5.inmoviebox.com/")
         return try {
             val code = c.responseCode
             val body = (if (code in 200..299) c.inputStream else c.errorStream)
@@ -78,126 +61,124 @@ object MovieBoxApi {
         } finally { c.disconnect() }
     }
 
-    /** Trending feed used for the home grid. */
-    fun homeFeed(): List<Movie> {
+    /**
+     * Returns the ordered list of rails the MovieBox home page would
+     * show. The endpoint returns data.operatingList — a list of section
+     * objects. Only the sections that carry a `subjects` array are
+     * turned into rails; ad-only or banner-only sections are skipped.
+     */
+    fun homeRails(): List<Rail> {
         return runCatching {
-            val j = getJson("/subject-api/trending/v2",
-                mapOf("page" to "1", "size" to "30"))
-            parseList(j.optJSONArray("data") ?: j.optJSONArray("results"))
-        }.getOrElse { emptyList() }
-    }
-
-    /** Curated editorial lists ("Top Picks", "Bollywood Hits", …). */
-    fun homePlaylists(): List<Playlist> {
-        return runCatching {
-            val j = getJson("/home/playlist")
-            val arr = j.optJSONArray("data")
-            if (arr == null) {
-                emptyList<Playlist>()
-            } else {
-                (0 until arr.length()).mapNotNull { i ->
-                    val o = arr.optJSONObject(i) ?: return@mapNotNull null
-                    Playlist(
-                        id = o.optString("id", o.optString("playlistId")),
-                        title = o.optString("title", o.optString("name")),
-                        items = parseList(o.optJSONArray("subjects") ?: o.optJSONArray("items"))
-                    )
+            val j = getJson("/home")
+            val ops = j.optJSONObject("data")?.optJSONArray("operatingList")
+            if (ops == null) emptyList<Rail>() else {
+                val rails = ArrayList<Rail>()
+                (0 until ops.length()).forEach { i ->
+                    val op = ops.optJSONObject(i) ?: return@forEach
+                    val subs = op.optJSONArray("subjects")
+                    if (subs != null && subs.length() > 0) {
+                        val items = parseList(subs)
+                        if (items.isNotEmpty()) rails.add(Rail(op.optString("title", "More"), items))
+                    }
                 }
+                rails
             }
         }.getOrDefault(emptyList())
     }
+
+    /** Free-text search via the suggestions endpoint + trending filter. */
     fun search(query: String): List<Movie> {
         if (query.isBlank()) return emptyList()
         return runCatching {
-            val j = getJson("/subject-api/search/v2",
-                mapOf("keyword" to query, "page" to "1", "size" to "30"))
-            parseList(j.optJSONArray("data") ?: j.optJSONArray("results"))
-        }.getOrElse { emptyList() }
+            val suggest = getJson("/subject/everyone-search", mapOf("keyword" to query))
+            val wanted = suggest.optJSONObject("data")
+                ?.optJSONArray("everyoneSearch")
+                ?.let { arr -> (0 until arr.length()).mapNotNull { arr.optJSONObject(it)?.optString("title") } }
+                .orEmpty()
+            val trending = trending()
+            if (wanted.isEmpty()) trending
+            else trending.filter { m -> wanted.any { m.title.contains(it, ignoreCase = true) } }
+                .ifEmpty { trending }
+        }.getOrDefault(emptyList())
     }
 
-    /** Single movie / series detail. */
-    fun detail(subjectId: String): MovieDetail? {
-        return runCatching {
-            val j = getJson("/subject-api/detail-rec", mapOf("subjectId" to subjectId))
-            val d = j.optJSONObject("data") ?: j
-            val playInfo = runCatching {
-                getJson("/subject-api/play-info", mapOf("subjectId" to subjectId)).optJSONObject("data")
-            }.getOrNull()
-            MovieDetail(
-                id = d.optString("subjectId", d.optString("id", subjectId)),
-                title = d.optString("title"),
-                overview = d.optString("description", d.optString("overview")),
-                year = d.optString("year"),
-                rating = d.optString("rating"),
-                duration = d.optString("duration"),
-                poster = poster(d),
-                backdrop = backdrop(d),
-                genre = (0 until d.optJSONArray("genres")?.length().orZero()).joinToString {
-                    d.optJSONArray("genres")?.optString(it).orEmpty()
-                }.ifBlank { d.optString("genre") },
-                casts = (0 until d.optJSONArray("casts")?.length().orZero()).joinToString {
-                    d.optJSONArray("casts")?.optString(it).orEmpty()
-                },
-                streamUrl = playInfo?.optString("playUrl").orEmpty(),
-                captions = parseCaptions(playInfo?.optJSONArray("captions"))
-            )
-        }.getOrNull()
-    }
+    /** Trending / hot subjects — used as the search fallback corpus. */
+    fun trending(): List<Movie> = runCatching {
+        val j = getJson("/subject/trending")
+        parseList(j.optJSONObject("data")?.optJSONArray("subjectList"))
+    }.getOrDefault(emptyList())
 
-    /** Fetch external subtitles for a subject (used as a fallback when the
-     *  play-info bundle does not include caption tracks). */
-    fun captions(subjectId: String): List<Caption> {
-        return runCatching {
-            val j = getJson("/subject-api/get-ext-captions",
-                mapOf("subjectId" to subjectId))
-            parseCaptions(j.optJSONArray("data"))
-        }.getOrElse { emptyList() }
-    }
+    /**
+     * Detail + play info for a single subject. The public BFF always
+     * returns empty streams unless the caller is authenticated; the
+     * UI should check [Detail.hasResource] + [Detail.streams] before
+     * trying to play.
+     */
+    fun detail(subjectId: String): Detail? = runCatching {
+        val j = getJson("/subject/play", mapOf("subjectId" to subjectId))
+        val d = j.optJSONObject("data") ?: return@runCatching null
+        val streams = ArrayList<Stream>()
+        d.optJSONArray("streams")?.let { arr ->
+            for (i in 0 until arr.length()) {
+                val s = arr.optJSONObject(i) ?: continue
+                val url = s.optString("url", s.optString("mainUrl"))
+                if (url.isNotBlank()) streams.add(
+                    Stream(s.optString("quality", s.optString("label", "HD")),
+                           s.optString("format", "hls"), url, s.optInt("size", 0))
+                )
+            }
+        }
+        d.optJSONArray("hls")?.let { arr ->
+            for (i in 0 until arr.length()) {
+                val s = arr.optJSONObject(i) ?: continue
+                val url = s.optString("url")
+                if (url.isNotBlank()) streams.add(Stream("HLS", "hls", url, 0))
+            }
+        }
+        d.optJSONArray("dash")?.let { arr ->
+            for (i in 0 until arr.length()) {
+                val s = arr.optJSONObject(i) ?: continue
+                val url = s.optString("url")
+                if (url.isNotBlank()) streams.add(Stream("DASH", "dash", url, 0))
+            }
+        }
+        Detail(
+            hasResource = d.optBoolean("hasResource", false),
+            streams = streams,
+            vipLocked = d.optBoolean("vipLocked", false),
+            maxResolution = d.optJSONObject("playConfig")?.optInt("maxResolution", 1080) ?: 1080
+        )
+    }.getOrNull()
 
     private fun parseList(arr: JSONArray?): List<Movie> {
         if (arr == null) return emptyList()
-        return (0 until arr.length()).mapNotNull { i ->
-            val o = arr.optJSONObject(i) ?: return@mapNotNull null
-            Movie(
-                id = o.optString("subjectId", o.optString("id")),
-                title = o.optString("title", o.optString("name")),
-                year = o.optString("year", o.optString("releaseYear")),
-                rating = o.optString("rating", o.optString("score")),
-                poster = poster(o),
-                backdrop = backdrop(o),
+        val out = ArrayList<Movie>()
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            val cover = o.optJSONObject("cover")
+            val rawCover = cover?.optString("url").orEmpty()
+            val poster = if (rawCover.startsWith("http")) rawCover
+                         else if (rawCover.isNotBlank()) "$CDN_IMAGE/$rawCover"
+                         else ""
+            val rawBackdrop = cover?.optString("backdrop")?.takeIf { it.isNotBlank() }
+                ?: o.optString("backdrop")
+            val backdrop = if (rawBackdrop.startsWith("http")) rawBackdrop
+                           else if (rawBackdrop.isNotBlank()) "$CDN_IMAGE/$rawBackdrop"
+                           else poster
+            out.add(Movie(
+                id = o.optString("subjectId"),
+                title = o.optString("title"),
+                year = o.optString("releaseDate").take(4),
+                rating = o.optString("imdbRatingValue"),
+                poster = poster,
                 genre = o.optString("genre"),
-                type = o.optString("subjectType", o.optString("type"))
-            )
+                country = o.optString("countryName"),
+                type = o.optString("subjectType"),
+                backdrop = backdrop
+            ))
         }
+        return out
     }
-
-    private fun poster(o: JSONObject): String {
-        val raw = o.optString("cover", o.optString("poster", o.optString("imageUrl")))
-        if (raw.isBlank()) return ""
-        return if (raw.startsWith("http")) raw else "$CDN/$raw"
-    }
-
-    private fun backdrop(o: JSONObject): String {
-        val raw = o.optString("backdrop", o.optString("banner"))
-        if (raw.isBlank()) return poster(o)
-        return if (raw.startsWith("http")) raw else "$CDN/$raw"
-    }
-
-    private fun parseCaptions(arr: JSONArray?): List<Caption> {
-        if (arr == null) return emptyList()
-        return (0 until arr.length()).mapNotNull { i ->
-            val o = arr.optJSONObject(i) ?: return@mapNotNull null
-            val url = o.optString("url", o.optString("captionUrl"))
-            if (url.isBlank()) return@mapNotNull null
-            Caption(
-                language = o.optString("language", o.optString("lang", "en")),
-                label = o.optString("label", o.optString("name", "English")),
-                url = if (url.startsWith("http")) url else "$CDN/$url"
-            )
-        }
-    }
-
-    private fun Int?.orZero(): Int = this ?: 0
 
     data class Movie(
         val id: String,
@@ -205,27 +186,17 @@ object MovieBoxApi {
         val year: String = "",
         val rating: String = "",
         val poster: String = "",
-        val backdrop: String = "",
         val genre: String = "",
-        val type: String = "movie"
+        val country: String = "",
+        val type: String = "1",
+        val backdrop: String = ""
     )
-
-    data class MovieDetail(
-        val id: String,
-        val title: String,
-        val overview: String,
-        val year: String,
-        val rating: String,
-        val duration: String,
-        val poster: String,
-        val backdrop: String,
-        val genre: String,
-        val casts: String,
-        val streamUrl: String,
-        val captions: List<Caption>
+    data class Rail(val title: String, val items: List<Movie>)
+    data class Stream(val quality: String, val format: String, val url: String, val size: Int)
+    data class Detail(
+        val hasResource: Boolean,
+        val streams: List<Stream>,
+        val vipLocked: Boolean,
+        val maxResolution: Int
     )
-
-    data class Playlist(val id: String, val title: String, val items: List<Movie>)
-
-    data class Caption(val language: String, val label: String, val url: String)
 }

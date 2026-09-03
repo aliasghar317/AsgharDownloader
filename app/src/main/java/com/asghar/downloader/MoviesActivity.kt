@@ -17,22 +17,28 @@ import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import com.asghar.downloader.utils.MovieBoxApi
 import com.asghar.downloader.utils.ThumbnailCache
+import org.json.JSONArray
+import org.json.JSONObject
 import java.util.concurrent.Executors
 
 /**
  * MovieBox-style movies tab. The screen is laid out like Netflix/MovieBox:
- *   [ Top: animated "Asghar Downloader" title + search bar ]
+ *   [ Top: "Asghar Downloader" title + back button + cookie key ]
+ *   [ Search bar + status line ]
  *   [ Hero banner with Play / Info buttons ]
- *   [ Horizontal rails: Trending, Top Picks, … ]
- *   [ Grid rail (search results) ]
+ *   [ Vertical list: section header, then horizontal rails of posters ]
+ *   [ Pull-to-refresh to force reload ]
  *
- * All data is fetched from api.inmoviebox.com (MovieBox's public BFF).
- * Region-blocked requests return empty rails instead of an error toast,
- * so the user can still see a partially populated catalogue.
+ * All data is fetched from h5-api.aoneroom.com (MovieBox's public BFF).
+ * Stream URLs (subject/play) are empty for unauthenticated callers; the
+ * "Play" button on the hero shows a friendly "Sign in to watch" message
+ * when the title is locked behind a login.
  */
 class MoviesActivity : AppCompatActivity() {
+
     private val executor = Executors.newFixedThreadPool(3)
     private val main = Handler(Looper.getMainLooper())
     private lateinit var search: EditText
@@ -43,14 +49,15 @@ class MoviesActivity : AppCompatActivity() {
     private lateinit var heroPlay: Button
     private lateinit var heroInfo: Button
     private lateinit var list: RecyclerView
+    private lateinit var swipe: SwipeRefreshLayout
 
-    private val adapters = mutableListOf<Any>()
-    private val railData = mutableListOf<Rail>()
     private var currentSearch = ""
+    private var inflight = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_movies)
+
         search = findViewById(R.id.etSearch)
         status = findViewById(R.id.tvStatus)
         heroTitle = findViewById(R.id.tvHeroTitle)
@@ -59,25 +66,34 @@ class MoviesActivity : AppCompatActivity() {
         heroPlay = findViewById(R.id.btnHeroPlay)
         heroInfo = findViewById(R.id.btnHeroInfo)
         list = findViewById(R.id.rvMovies)
+        swipe = findViewById(R.id.swipeMovies)
+
         list.layoutManager = LinearLayoutManager(this)
+        swipe.setColorSchemeResources(android.R.color.holo_red_light, android.R.color.holo_orange_light)
+        swipe.setOnRefreshListener { loadHome(force = true) }
 
         findViewById<ImageButton>(R.id.btnBack).setOnClickListener { finish() }
         findViewById<ImageButton>(R.id.btnKey).setOnClickListener { showKeyDialog() }
         search.setOnEditorActionListener { _, action, _ ->
             if (action == EditorInfo.IME_ACTION_SEARCH) {
                 currentSearch = search.text.toString().trim()
-                loadSearch(currentSearch); true
+                if (currentSearch.isBlank()) loadHome(force = true) else loadSearch(currentSearch, force = true)
+                true
             } else false
         }
 
-        loadHome()
+        // Show cached data immediately so the screen is not blank on
+        // every open. The network call below silently refreshes the
+        // list in the background.
+        renderCache()
+        loadHome(force = false)
     }
 
     private fun showKeyDialog() {
         val edt = EditText(this).apply { hint = "MovieBox API base URL (optional override)" }
         androidx.appcompat.app.AlertDialog.Builder(this)
             .setTitle("MovieBox settings")
-            .setMessage("By default the app calls api.inmoviebox.com. Leave blank for default.")
+            .setMessage("By default the app calls h5-api.aoneroom.com. Leave blank for default.")
             .setView(edt)
             .setNegativeButton("Cancel", null)
             .setPositiveButton("Save") { _, _ ->
@@ -88,54 +104,125 @@ class MoviesActivity : AppCompatActivity() {
             .show()
     }
 
-    private fun loadHome() {
-        status.text = "Loading movie catalog…"
+    private fun loadHome(force: Boolean) {
+        if (inflight) return
+        inflight = true
+        if (!swipe.isRefreshing) swipe.isRefreshing = true
+        status.text = if (force) "Refreshing catalog…" else "Loading movie catalog…"
         executor.execute {
-            val trending = MovieBoxApi.homeFeed()
-            val playlists = MovieBoxApi.homePlaylists()
+            val rails = MovieBoxApi.homeRails()
+            val trending = MovieBoxApi.trending()
             main.post {
-                railData.clear()
-                if (trending.isNotEmpty()) {
-                    railData.add(Rail("🔥 Trending Now", trending))
-                }
-                playlists.forEach { p ->
-                    if (p.items.isNotEmpty()) railData.add(Rail(p.title, p.items))
-                }
-                if (railData.isEmpty()) {
-                    status.text = "No movies available in this region. Try search."
+                inflight = false
+                swipe.isRefreshing = false
+                if (rails.isEmpty() && trending.isEmpty()) {
+                    status.text = "No movies available. Try search."
                 } else {
-                    status.text = "Showing ${railData.size} rails"
+                    status.text = "Showing ${rails.size} rails"
+                    cacheRails(rails, trending)
+                    bindRails(rails, trending)
+                    if (trending.isNotEmpty()) bindHero(trending.first())
                 }
-                bindRails()
-                if (trending.isNotEmpty()) bindHero(trending.first())
             }
         }
     }
 
-    private fun loadSearch(query: String) {
-        if (query.isBlank()) { loadHome(); return }
+    private fun loadSearch(query: String, force: Boolean) {
+        if (inflight) return
+        inflight = true
+        if (!swipe.isRefreshing) swipe.isRefreshing = true
         status.text = "Searching for \"$query\"…"
         executor.execute {
             val results = MovieBoxApi.search(query)
             main.post {
-                railData.clear()
-                railData.add(Rail("Search results", results))
-                status.text = if (results.isEmpty()) "No results for \"$query\""
-                              else "${results.size} results"
-                bindRails()
+                inflight = false
+                swipe.isRefreshing = false
+                val rails = if (results.isEmpty()) emptyList() else listOf(MovieBoxApi.Rail("Search results", results))
+                status.text = if (results.isEmpty()) "No results for \"$query\"" else "${results.size} results"
+                bindRails(rails, emptyList())
                 if (results.isNotEmpty()) bindHero(results.first())
             }
         }
     }
 
-    private fun bindRails() {
-        val merged = mutableListOf<Any>()
-        railData.forEach { r ->
-            merged.add(HeaderItem(r.title))
-            r.items.forEach { merged.add(it) }
+    /** Caches rails + trending under one SharedPreferences key so the
+     *  next open can paint instantly. The cache is overwritten on every
+     *  successful network load. */
+    private fun cacheRails(rails: List<MovieBoxApi.Rail>, trending: List<MovieBoxApi.Movie>) {
+        val root = JSONObject()
+        root.put("savedAt", System.currentTimeMillis())
+        root.put("trending", JSONArray().apply { trending.forEach { put(movieToJson(it)) } })
+        root.put("rails", JSONArray().apply {
+            rails.forEach { r ->
+                val o = JSONObject()
+                o.put("title", r.title)
+                o.put("items", JSONArray().apply { r.items.forEach { put(movieToJson(it)) } })
+                put(o)
+            }
+        })
+        getPreferences(MODE_PRIVATE).edit()
+            .putString("moviebox_cache_v1", root.toString())
+            .apply()
+    }
+
+    private fun renderCache() {
+        val raw = getPreferences(MODE_PRIVATE).getString("moviebox_cache_v1", null) ?: return
+        val root = runCatching { JSONObject(raw) }.getOrNull() ?: return
+        val rails = ArrayList<MovieBoxApi.Rail>()
+        root.optJSONArray("rails")?.let { arr ->
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i) ?: continue
+                val items = ArrayList<MovieBoxApi.Movie>()
+                o.optJSONArray("items")?.let { ia ->
+                    for (j in 0 until ia.length()) items.add(jsonToMovie(ia.optJSONObject(j)))
+                }
+                if (items.isNotEmpty()) rails.add(MovieBoxApi.Rail(o.optString("title"), items))
+            }
         }
-        adapters.clear()
-        adapters.addAll(merged)
+        val trending = ArrayList<MovieBoxApi.Movie>()
+        root.optJSONArray("trending")?.let { arr ->
+            for (i in 0 until arr.length()) trending.add(jsonToMovie(arr.optJSONObject(i)))
+        }
+        if (rails.isNotEmpty() || trending.isNotEmpty()) {
+            bindRails(rails, trending)
+            if (trending.isNotEmpty()) bindHero(trending.first())
+            status.text = "Showing cached movies (${rails.size} rails) — refreshing…"
+        }
+    }
+
+    private fun movieToJson(m: MovieBoxApi.Movie): JSONObject = JSONObject().apply {
+        put("id", m.id); put("title", m.title); put("year", m.year)
+        put("rating", m.rating); put("poster", m.poster); put("genre", m.genre)
+        put("country", m.country); put("type", m.type); put("backdrop", m.backdrop)
+    }
+
+    private fun jsonToMovie(o: JSONObject?): MovieBoxApi.Movie {
+        if (o == null) return MovieBoxApi.Movie("", "Unknown")
+        return MovieBoxApi.Movie(
+            id = o.optString("id"),
+            title = o.optString("title"),
+            year = o.optString("year"),
+            rating = o.optString("rating"),
+            poster = o.optString("poster"),
+            genre = o.optString("genre"),
+            country = o.optString("country"),
+            type = o.optString("type", "1"),
+            backdrop = o.optString("backdrop")
+        )
+    }
+
+    private fun bindRails(rails: List<MovieBoxApi.Rail>, trending: List<MovieBoxApi.Movie>) {
+        val merged = mutableListOf<Any>()
+        if (trending.isNotEmpty()) {
+            merged.add(HeaderItem("🔥 Trending Now"))
+            trending.take(10).forEach { merged.add(it) }
+        }
+        rails.forEach { r ->
+            if (r.items.isNotEmpty()) {
+                merged.add(HeaderItem(r.title))
+                r.items.take(10).forEach { merged.add(it) }
+            }
+        }
         list.adapter = MoviesAdapter(merged) { onMovieClick(it) }
     }
 
@@ -143,11 +230,8 @@ class MoviesActivity : AppCompatActivity() {
         heroTitle.text = m.title
         val parts = listOf(m.year, m.rating, m.genre).filter { it.isNotBlank() }
         heroMeta.text = parts.joinToString(" • ")
-        if (m.backdrop.isNotBlank()) {
-            ThumbnailCache.loadInto(this, m.backdrop, heroImage)
-        } else if (m.poster.isNotBlank()) {
-            ThumbnailCache.loadInto(this, m.poster, heroImage)
-        }
+        val img = if (m.backdrop.isNotBlank()) m.backdrop else m.poster
+        if (img.isNotBlank()) ThumbnailCache.loadInto(this, img, heroImage)
         heroPlay.setOnClickListener { onMovieClick(m) }
         heroInfo.setOnClickListener { onMovieClick(m) }
     }
@@ -162,21 +246,22 @@ class MoviesActivity : AppCompatActivity() {
                     Toast.makeText(this, "Could not load detail", Toast.LENGTH_SHORT).show()
                     return@post
                 }
-                if (detail.streamUrl.isBlank()) {
-                    status.text = "No playable stream for \"${detail.title}\""
-                    Toast.makeText(this, "No playable stream found", Toast.LENGTH_LONG).show()
+                if (detail.vipLocked || detail.streams.isEmpty()) {
+                    status.text = "\"${m.title}\" requires sign-in to play"
+                    Toast.makeText(this, "Sign in to watch \"${m.title}\" (MovieBox stream locked)", Toast.LENGTH_LONG).show()
                     return@post
                 }
+                val s = detail.streams.first()
                 val i = Intent(this, MoviePlayerActivity::class.java).apply {
-                    putExtra("STREAM_URL", detail.streamUrl)
-                    putExtra("TITLE", detail.title)
+                    putExtra("STREAM_URL", s.url)
+                    putExtra("TITLE", m.title)
+                    putExtra("FORMAT", s.format)
                 }
                 startActivity(i)
             }
         }
     }
 
-    private data class Rail(val title: String, val items: List<MovieBoxApi.Movie>)
     private data class HeaderItem(val title: String)
 
     private class MoviesAdapter(
@@ -185,21 +270,19 @@ class MoviesActivity : AppCompatActivity() {
     ) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
 
         private val TYPE_HEADER = 0
-        private val TYPE_POSTER = 1
-        private val TYPE_ROW    = 2
+        private val TYPE_POSTER  = 1
 
         override fun getItemViewType(position: Int): Int = when (items[position]) {
             is HeaderItem -> TYPE_HEADER
             is MovieBoxApi.Movie -> TYPE_POSTER
-            else -> TYPE_ROW
+            else -> TYPE_HEADER
         }
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder {
             val inf = LayoutInflater.from(parent.context)
             return when (viewType) {
                 TYPE_HEADER -> HeaderHolder(inf.inflate(R.layout.item_movie_section_header, parent, false))
-                TYPE_POSTER -> PosterHolder(inf.inflate(R.layout.item_movie_poster, parent, false))
-                else        -> RowHolder(inf.inflate(R.layout.item_movie, parent, false))
+                else        -> PosterHolder(inf.inflate(R.layout.item_movie_poster, parent, false))
             }
         }
 
@@ -208,10 +291,7 @@ class MoviesActivity : AppCompatActivity() {
         override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
             when (val item = items[position]) {
                 is HeaderItem -> (holder as HeaderHolder).title.text = item.title
-                is MovieBoxApi.Movie -> when (holder) {
-                    is PosterHolder -> bindPoster(holder, item)
-                    is RowHolder    -> bindRow(holder, item)
-                }
+                is MovieBoxApi.Movie -> bindPoster(holder as PosterHolder, item)
             }
         }
 
@@ -226,22 +306,6 @@ class MoviesActivity : AppCompatActivity() {
             h.itemView.setOnClickListener { onClick(m) }
         }
 
-        private fun bindRow(h: RowHolder, m: MovieBoxApi.Movie) {
-            h.title.text = m.title
-            val parts = listOfNotNull(
-                m.year.takeIf { it.isNotBlank() },
-                m.rating.takeIf { it.isNotBlank() }?.let { "★ $it" },
-                m.genre.takeIf { it.isNotBlank() }
-            )
-            h.meta.text = parts.joinToString(" • ")
-            h.overview.text = ""
-            h.poster.tag = m.poster
-            if (m.poster.isNotBlank()) {
-                ThumbnailCache.loadInto(h.itemView.context, m.poster, h.poster)
-            }
-            h.itemView.setOnClickListener { onClick(m) }
-        }
-
         class HeaderHolder(v: View) : RecyclerView.ViewHolder(v) {
             val title: TextView = v.findViewById(R.id.tvSectionTitle)
         }
@@ -249,12 +313,6 @@ class MoviesActivity : AppCompatActivity() {
             val poster: ImageView = v.findViewById(R.id.ivPoster)
             val title: TextView = v.findViewById(R.id.tvTitle)
             val rating: TextView = v.findViewById(R.id.tvRating)
-        }
-        class RowHolder(v: View) : RecyclerView.ViewHolder(v) {
-            val poster: ImageView = v.findViewById(R.id.ivPoster)
-            val title: TextView = v.findViewById(R.id.tvTitle)
-            val meta: TextView = v.findViewById(R.id.tvMeta)
-            val overview: TextView = v.findViewById(R.id.tvOverview)
         }
     }
 }
