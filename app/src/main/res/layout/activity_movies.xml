@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="match_parent"
+    android:orientation="vertical" android:background="#0B0B0B" android:padding="12dp">
+    <LinearLayout android:layout_width="match_parent" android:layout_height="52dp" android:gravity="center_vertical">
+        <ImageButton android:id="@+id/btnBack" android:layout_width="44dp" android:layout_height="44dp" android:background="@android:color/transparent" android:src="@drawable/ic_back" android:contentDescription="Back" android:padding="10dp"/>
+        <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="Movies" android:fontFamily="serif" android:textColor="#FFFFFF" android:textSize="24sp" android:textStyle="bold"/>
+        <ImageButton android:id="@+id/btnKey" android:layout_width="44dp" android:layout_height="44dp" android:background="@android:color/transparent" android:src="@android:drawable/ic_menu_manage" android:tint="#FFFFFF" android:contentDescription="Movie API settings"/>
+    </LinearLayout>
+    <EditText android:id="@+id/etSearch" android:layout_width="match_parent" android:layout_height="48dp" android:layout_marginTop="6dp" android:background="@drawable/edittext_bg" android:hint="Search movies..." android:textColor="#FFFFFF" android:textColorHint="#777777" android:singleLine="true" android:paddingStart="14dp" android:paddingEnd="14dp" android:imeOptions="actionSearch"/>
+    <HorizontalScrollView android:layout_width="match_parent" android:layout_height="46dp" android:layout_marginTop="6dp" android:scrollbars="none">
+        <LinearLayout android:id="@+id/languageRow" android:layout_width="wrap_content" android:layout_height="match_parent" android:gravity="center_vertical" android:orientation="horizontal"/>
+    </HorizontalScrollView>
+    <TextView android:id="@+id/tvStatus" android:layout_width="match_parent" android:layout_height="wrap_content" android:padding="4dp" android:textColor="#9A9A9A" android:textSize="11sp"/>
+    <androidx.recyclerview.widget.RecyclerView android:id="@+id/rvMovies" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:clipToPadding="false" android:paddingBottom="16dp"/>
+    <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="This product uses the TMDB API but is not endorsed or certified by TMDB." android:textColor="#707070" android:textSize="9sp" android:paddingTop="4dp"/>
+</LinearLayout>

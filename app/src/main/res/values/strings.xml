@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Asghar Downloader</string>
+    <string name="hint_url">Paste video link here...</string>
+    <string name="btn_download">DOWNLOAD</string>
+    <string name="title_home">Home</string>
+    <string name="title_downloads">My Downloads</string>
+    <string name="title_settings">Settings</string>
+    <string name="msg_invalid_url">Invalid or Unsupported URL</string>
+</resources>

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:padding="5dp">
+    <ImageView android:id="@+id/ivPoster" android:layout_width="match_parent" android:layout_height="180dp" android:scaleType="centerCrop" android:background="#191919" android:src="@drawable/thumb_placeholder" android:contentDescription="Movie poster"/>
+    <TextView android:id="@+id/tvMovieTitle" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="5dp" android:textColor="#FFFFFF" android:textSize="12sp" android:fontFamily="serif" android:maxLines="2" android:ellipsize="end"/>
+    <TextView android:id="@+id/tvMovieMeta" android:layout_width="match_parent" android:layout_height="wrap_content" android:textColor="#8E8E8E" android:textSize="9sp" android:maxLines="1" android:ellipsize="end"/>
+</LinearLayout>
