@@ -27,6 +27,18 @@ jobs:
       with:
         packages: platform-tools platforms;android-34 build-tools;36.0.0
 
+    # gradle.properties hard-codes /opt/android-sdk/build-tools/36.0.0/aapt2 so
+    # the same path works on every machine. On the GitHub-hosted runner the SDK
+    # lives at /usr/local/lib/android/sdk, so expose it under /opt/android-sdk
+    # for the build (and aapt2 will be picked up by the AarResourcesCompilerTransform).
+    - name: Symlink Android SDK to /opt/android-sdk
+      run: |
+        if [ ! -e /opt/android-sdk ]; then
+          sudo mkdir -p /opt
+          sudo ln -s "$ANDROID_SDK_ROOT" /opt/android-sdk
+        fi
+        ls -l /opt/android-sdk/build-tools/36.0.0/aapt2
+
     - name: Grant execute permission for gradlew
       run: chmod +x gradlew
 
