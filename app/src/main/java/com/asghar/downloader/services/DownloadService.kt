@@ -3,6 +3,7 @@ package com.asghar.downloader.services
 import android.app.Service
 import android.content.Intent
 import android.os.IBinder
+import com.asghar.downloader.utils.CookieStore
 import com.asghar.downloader.utils.DownloadStorage
 import com.asghar.downloader.utils.DownloadStore
 import com.asghar.downloader.utils.LinkMetadataFetcher
@@ -317,22 +318,28 @@ class DownloadService : Service() {
         request.addOption("--fragment-retries", "20")
         request.addOption("--concurrent-fragments", "4")
         if (quality != "mp3") request.addOption("--merge-output-format", "mp4")
-        // Use the web client first, then the iOS client as a fallback. These two
-        // clients are still allowed to stream without the "Sign in to confirm"
-        // bot challenge on most videos. tv_embedded is a final fallback.
+        // YouTube's bot detection rotates weekly. We combine the freshest yt-dlp
+        // (nightly build) with the most permissive client order we have found to
+        // work without cookies: web_safari first, then web, then android_vr, then
+        // ios, then tv_embedded. If the user has imported cookies from the
+        // in-app YouTube login (see CookieStore) we pass them through here so the
+        // server treats us like a signed-in user.
         if (LinkParser.detectPlatform(url) == "YouTube") {
             request.addOption(
                 "--extractor-args",
-                "youtube:player_client=mweb,web,ios,tv_embedded;formats=missing_pot"
+                "youtube:player_client=web_safari,web,android_vr,ios,tv_embedded;formats=missing_pot"
             )
             request.addOption(
                 "--user-agent",
-                "com.google.android.youtube/19.09.37 (Linux; U; Android 11) gzip"
+                "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36"
             )
             request.addOption(
                 "--add-header",
                 "Accept-Language:en-US,en;q=0.9"
             )
+            if (CookieStore.hasCookies(this)) {
+                request.addOption("--cookies", CookieStore.cookiesFile(this).absolutePath)
+            }
         }
         request.addOption("-o", "${workDir.absolutePath}/%(title).200B.%(ext)s")
         return request

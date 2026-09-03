@@ -5,11 +5,15 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.media.MediaMetadataRetriever
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
+import android.widget.ImageView
 import java.io.File
 import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.security.MessageDigest
+import java.util.concurrent.Executors
 
 /** Persistent, small thumbnail cache. It survives activity/app restarts so thumbnails are not re-downloaded. */
 object ThumbnailCache {
@@ -55,6 +59,26 @@ object ThumbnailCache {
             }
         } finally { c.disconnect() }
     }.getOrNull()
+
+    /**
+     * Bind a remote image URL to an ImageView. Hits the on-disk cache first,
+     * falls back to a background fetch. Cancels itself if the view's tag has
+     * changed by the time the bitmap returns (i.e. the row was recycled).
+     */
+    fun loadInto(context: Context, url: String, view: ImageView) {
+        if (url.isBlank()) { view.setImageDrawable(null); return }
+        val tag = url
+        view.tag = tag
+        get(context, url)?.let { bmp -> view.setImageBitmap(bmp); return }
+        view.setImageDrawable(null)
+        IO.execute {
+            val bmp = loadRemote(context, url) ?: return@execute
+            put(context, url, bmp)
+            MAIN.post {
+                if (view.tag == tag) view.setImageBitmap(bmp)
+            }
+        }
+    }
 
     fun loadLocal(context: Context, path: String): Bitmap? = runCatching {
         if (path.isBlank()) return@runCatching null
@@ -125,4 +149,7 @@ object ThumbnailCache {
             if (f.delete()) { total -= size; count-- }
         }
     }
+
+    private val IO = Executors.newFixedThreadPool(3)
+    private val MAIN = Handler(Looper.getMainLooper())
 }

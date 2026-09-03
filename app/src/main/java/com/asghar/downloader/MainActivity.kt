@@ -15,6 +15,7 @@ import androidx.core.content.ContextCompat
 import com.asghar.downloader.databinding.ActivityMainBinding
 import com.asghar.downloader.databinding.DialogGradientTitleBinding
 import com.asghar.downloader.services.DownloadService
+import com.asghar.downloader.utils.CookieStore
 import com.asghar.downloader.utils.EdgeToEdge
 import com.asghar.downloader.utils.LinkParser
 import com.asghar.downloader.utils.ProtectedMessage
@@ -36,6 +37,7 @@ class MainActivity : AppCompatActivity() {
         EdgeToEdge.apply(binding.root)
 
         binding.btnDownload.setOnClickListener { startSelectedDownload() }
+        binding.btnYoutubeSignIn.setOnClickListener { startActivity(Intent(this, YouTubeLoginActivity::class.java)) }
         binding.btnWhatsapp.setOnClickListener { openUrl("https://wa.me/923093472919") }
         binding.btnTelegram.setOnClickListener { openUrl("https://t.me/FsOfFullMargin") }
         binding.btnDownloads.setOnClickListener { startActivity(Intent(this, MyDownloadsActivity::class.java)) }

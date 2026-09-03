@@ -1,6 +1,54 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:padding="5dp">
-    <ImageView android:id="@+id/ivPoster" android:layout_width="match_parent" android:layout_height="180dp" android:scaleType="centerCrop" android:background="#191919" android:src="@drawable/thumb_placeholder" android:contentDescription="Movie poster"/>
-    <TextView android:id="@+id/tvMovieTitle" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="5dp" android:textColor="#FFFFFF" android:textSize="12sp" android:fontFamily="serif" android:maxLines="2" android:ellipsize="end"/>
-    <TextView android:id="@+id/tvMovieMeta" android:layout_width="match_parent" android:layout_height="wrap_content" android:textColor="#8E8E8E" android:textSize="9sp" android:maxLines="1" android:ellipsize="end"/>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginStart="14dp"
+    android:layout_marginEnd="14dp"
+    android:layout_marginBottom="10dp"
+    android:background="#10121A"
+    android:orientation="horizontal"
+    android:padding="10dp">
+
+    <ImageView
+        android:id="@+id/ivPoster"
+        android:layout_width="78dp"
+        android:layout_height="110dp"
+        android:scaleType="centerCrop"
+        android:background="#000000" />
+
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="10dp"
+        android:layout_weight="1"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/tvTitle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:maxLines="2"
+            android:ellipsize="end"
+            android:textColor="#FFFFFF"
+            android:textSize="14sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/tvMeta"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="3dp"
+            android:textColor="#8B5CF6"
+            android:textSize="11sp" />
+
+        <TextView
+            android:id="@+id/tvOverview"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:maxLines="3"
+            android:ellipsize="end"
+            android:textColor="#9CA3AF"
+            android:textSize="12sp" />
+    </LinearLayout>
 </LinearLayout>

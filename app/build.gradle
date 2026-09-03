@@ -3,27 +3,46 @@ plugins {
     id 'org.jetbrains.kotlin.android'
 }
 
-// Download the latest stable yt-dlp source from GitHub releases and stage it under
+// Download the latest yt-dlp source from GitHub releases and stage it under
 // app/src/main/assets/yt-dlp/. The asset is packaged into the APK and copied to the
-// app's internal storage on first launch. This replaces the in-app network updater:
-// the bundled binary is always the freshest stable release at build time.
+// app's internal storage on first launch.
+//
+// YouTube's anti-bot rotates weekly, so a stable release is rarely fresh enough to
+// download videos without the "Sign in to confirm" challenge. We use the rolling
+// nightly build (yt-dlp/yt-dlp-nightly-builds) which is updated every time upstream
+// fixes a new bot-detection round. The output filename is the same as the stable
+// release so the rest of the project does not need to know which flavour it got.
 def ytDlpAssetDir = file("${projectDir}/src/main/assets/yt-dlp")
 def ytDlpAssetFile = file("${ytDlpAssetDir}/yt-dlp")
 
 task downloadLatestYtDlp {
-    description = 'Fetch the latest stable yt-dlp and place it in assets for bundling.'
+    description = 'Fetch the latest yt-dlp (nightly) and place it in assets for bundling.'
     outputs.file ytDlpAssetFile
     doLast {
         ytDlpAssetDir.mkdirs()
-        def url = 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp'
-        logger.lifecycle("Downloading latest yt-dlp from ${url}")
-        def bytes = url.toURL().bytes
+        // The nightly build is published at a pinned URL by upstream's nightly-builds
+        // workflow. If the asset is ever unavailable (mirror down) we fall back to
+        // the latest stable release so the app is never shipped without a binary.
+        def nightlyUrl = 'https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp'
+        def stableUrl  = 'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp'
+        def bytes = null
+        def source = ''
+        try {
+            logger.lifecycle("Downloading yt-dlp nightly from ${nightlyUrl}")
+            bytes = nightlyUrl.toURL().bytes
+            source = 'nightly'
+        } catch (e) {
+            logger.warn("Nightly download failed (${e.message}); falling back to stable release")
+            logger.lifecycle("Downloading yt-dlp stable from ${stableUrl}")
+            bytes = stableUrl.toURL().bytes
+            source = 'stable'
+        }
         ytDlpAssetFile.bytes = bytes
         ytDlpAssetFile.setExecutable(true, false)
         if (!ytDlpAssetFile.exists() || ytDlpAssetFile.length() == 0) {
             throw new GradleException("yt-dlp download failed: ${ytDlpAssetFile}")
         }
-        logger.lifecycle("yt-dlp staged: ${ytDlpAssetFile} (${ytDlpAssetFile.length()} bytes)")
+        logger.lifecycle("yt-dlp staged: ${ytDlpAssetFile} (${ytDlpAssetFile.length()} bytes, source=${source})")
     }
 }
 
@@ -77,6 +96,13 @@ dependencies {
     implementation 'com.google.android.material:material:1.9.0'
     implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
     implementation 'androidx.recyclerview:recyclerview:1.3.0'
+
+    // Media3 / ExoPlayer is used by the in-app movie player and by the
+    // standalone VideoPlayerActivity. The HLS extension is required for
+    // MovieBox's adaptive streams.
+    implementation 'androidx.media3:media3-exoplayer:1.3.1'
+    implementation 'androidx.media3:media3-exoplayer-hls:1.3.1'
+    implementation 'androidx.media3:media3-ui:1.3.1'
 
     // Latest published youtubedl-android release. The bundled yt-dlp from Maven is
     // months out of date; we override it with the freshest release at build time

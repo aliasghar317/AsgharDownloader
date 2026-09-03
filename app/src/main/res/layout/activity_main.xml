@@ -46,6 +46,21 @@
         app:layout_constraintTop_toBottomOf="@id/etUrl" />
 
     <TextView
+        android:id="@+id/btnYoutubeSignIn"
+        android:layout_width="0dp"
+        android:layout_height="40dp"
+        android:layout_marginTop="6dp"
+        android:background="@drawable/edittext_bg"
+        android:gravity="center"
+        android:padding="8dp"
+        android:text="Sign in to YouTube (fixes 'bot' errors)"
+        android:textColor="#8B5CF6"
+        android:textSize="12sp"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/btnDownload" />
+
+    <TextView
         android:id="@+id/tvQualityLabel"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"

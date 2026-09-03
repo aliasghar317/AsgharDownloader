@@ -1,17 +1,183 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:layout_width="match_parent" android:layout_height="match_parent"
-    android:orientation="vertical" android:background="#0B0B0B" android:padding="12dp">
-    <LinearLayout android:layout_width="match_parent" android:layout_height="52dp" android:gravity="center_vertical">
-        <ImageButton android:id="@+id/btnBack" android:layout_width="44dp" android:layout_height="44dp" android:background="@android:color/transparent" android:src="@drawable/ic_back" android:contentDescription="Back" android:padding="10dp"/>
-        <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="Movies" android:fontFamily="serif" android:textColor="#FFFFFF" android:textSize="24sp" android:textStyle="bold"/>
-        <ImageButton android:id="@+id/btnKey" android:layout_width="44dp" android:layout_height="44dp" android:background="@android:color/transparent" android:src="@android:drawable/ic_menu_manage" android:tint="#FFFFFF" android:contentDescription="Movie API settings"/>
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#0A0B10"
+    android:orientation="vertical">
+
+    <!-- Top bar: animated gradient title + search button -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="14dp"
+        android:paddingEnd="14dp"
+        android:paddingTop="10dp"
+        android:paddingBottom="6dp">
+
+        <ImageButton
+            android:id="@+id/btnBack"
+            android:layout_width="38dp"
+            android:layout_height="38dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="Back"
+            android:src="@drawable/ic_back" />
+
+        <com.asghar.downloader.views.GradientTextView
+            android:id="@+id/tvAppTitle"
+            android:layout_width="0dp"
+            android:layout_height="48dp"
+            android:layout_weight="1"
+            android:layout_marginStart="8dp" />
+
+        <ImageButton
+            android:id="@+id/btnKey"
+            android:layout_width="38dp"
+            android:layout_height="38dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="Token"
+            android:padding="6dp"
+            android:src="@drawable/ic_downloads" />
     </LinearLayout>
-    <EditText android:id="@+id/etSearch" android:layout_width="match_parent" android:layout_height="48dp" android:layout_marginTop="6dp" android:background="@drawable/edittext_bg" android:hint="Search movies..." android:textColor="#FFFFFF" android:textColorHint="#777777" android:singleLine="true" android:paddingStart="14dp" android:paddingEnd="14dp" android:imeOptions="actionSearch"/>
-    <HorizontalScrollView android:layout_width="match_parent" android:layout_height="46dp" android:layout_marginTop="6dp" android:scrollbars="none">
-        <LinearLayout android:id="@+id/languageRow" android:layout_width="wrap_content" android:layout_height="match_parent" android:gravity="center_vertical" android:orientation="horizontal"/>
-    </HorizontalScrollView>
-    <TextView android:id="@+id/tvStatus" android:layout_width="match_parent" android:layout_height="wrap_content" android:padding="4dp" android:textColor="#9A9A9A" android:textSize="11sp"/>
-    <androidx.recyclerview.widget.RecyclerView android:id="@+id/rvMovies" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:clipToPadding="false" android:paddingBottom="16dp"/>
-    <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="This product uses the TMDB API but is not endorsed or certified by TMDB." android:textColor="#707070" android:textSize="9sp" android:paddingTop="4dp"/>
+
+    <!-- Search bar -->
+    <EditText
+        android:id="@+id/etSearch"
+        android:layout_width="match_parent"
+        android:layout_height="44dp"
+        android:layout_marginStart="14dp"
+        android:layout_marginEnd="14dp"
+        android:layout_marginBottom="6dp"
+        android:background="@drawable/edittext_bg"
+        android:drawableStart="@android:drawable/ic_menu_search"
+        android:drawablePadding="8dp"
+        android:hint="Search movies, series, dramas…"
+        android:imeOptions="actionSearch"
+        android:inputType="text"
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp"
+        android:singleLine="true"
+        android:textColor="#FFFFFF"
+        android:textColorHint="#777F95"
+        android:textSize="14sp" />
+
+    <TextView
+        android:id="@+id/tvStatus"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingStart="14dp"
+        android:paddingEnd="14dp"
+        android:paddingBottom="6dp"
+        android:text="Loading…"
+        android:textColor="#7C8AA5"
+        android:textSize="12sp" />
+
+    <androidx.core.widget.NestedScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:fillViewport="true">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <!-- Hero / featured banner -->
+            <FrameLayout
+                android:id="@+id/heroContainer"
+                android:layout_width="match_parent"
+                android:layout_height="220dp"
+                android:layout_marginStart="14dp"
+                android:layout_marginEnd="14dp"
+                android:layout_marginBottom="10dp"
+                android:background="#10121A">
+
+                <ImageView
+                    android:id="@+id/ivHero"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:scaleType="centerCrop" />
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="120dp"
+                    android:layout_gravity="bottom"
+                    android:background="@drawable/hero_scrim" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="bottom"
+                    android:orientation="vertical"
+                    android:padding="12dp">
+
+                    <TextView
+                        android:id="@+id/tvHeroTitle"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:maxLines="2"
+                        android:ellipsize="end"
+                        android:shadowColor="#80000000"
+                        android:shadowDx="0"
+                        android:shadowDy="1"
+                        android:shadowRadius="3"
+                        android:textColor="#FFFFFF"
+                        android:textSize="18sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/tvHeroMeta"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="2dp"
+                        android:maxLines="1"
+                        android:textColor="#B8B8B8"
+                        android:textSize="12sp" />
+
+                    <LinearLayout
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:orientation="horizontal">
+
+                        <Button
+                            android:id="@+id/btnHeroPlay"
+                            android:layout_width="wrap_content"
+                            android:layout_height="34dp"
+                            android:background="@drawable/play_button_bg"
+                            android:minWidth="90dp"
+                            android:paddingStart="14dp"
+                            android:paddingEnd="14dp"
+                            android:text="Play"
+                            android:textAllCaps="false"
+                            android:textColor="#FFFFFF"
+                            android:textSize="13sp" />
+
+                        <Button
+                            android:id="@+id/btnHeroInfo"
+                            android:layout_width="wrap_content"
+                            android:layout_height="34dp"
+                            android:layout_marginStart="8dp"
+                            android:background="@drawable/pause_button_bg"
+                            android:minWidth="90dp"
+                            android:paddingStart="14dp"
+                            android:paddingEnd="14dp"
+                            android:text="Info"
+                            android:textAllCaps="false"
+                            android:textColor="#FFFFFF"
+                            android:textSize="13sp" />
+                    </LinearLayout>
+                </LinearLayout>
+            </FrameLayout>
+
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/rvMovies"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:nestedScrollingEnabled="false" />
+        </LinearLayout>
+    </androidx.core.widget.NestedScrollView>
 </LinearLayout>
