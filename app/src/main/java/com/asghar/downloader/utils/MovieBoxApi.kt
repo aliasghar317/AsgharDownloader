@@ -44,11 +44,15 @@ object MovieBoxApi {
      * config response with VIP bypass data.
      */
     private fun getVipConfig(): Boolean = runCatching {
-        // The modded APK calls cloud-config-oss.shalltry.com / dsu-a.shalltry.com
-        // with the preloadconfig query to get signCookie
+        // The modded APK calls cloud-config-oss.shalltry.com /
+        // cloud-config-api.shalltry.com / ind-dsu-a.shalltry.com
+        // to get the VIP bypass config (signCookie).
+        // PCAP: ind-dsu-a.shalltry.com → 18.64.141.27 → 77 KB sent
         val urls = listOf(
-            "https://dsu-a.shalltry.com/front/cloudconfig/consumer-not-login/cloudconfig/query/queryCloudConfigInfo",
+            "https://cloud-config-api.shalltry.com/front/cloudconfig/consumer-not-login/cloudconfig/query/queryCloudConfigInfo",
             "https://cloud-config-oss.shalltry.com/cloudconfig/config/onoff/miniapp_cloudconfig_onoff.json",
+            "https://cloud-config-oss.shalltry.com/cloudconfig/config/",
+            "https://dsu-a.shalltry.com/front/cloudconfig/consumer-not-login/cloudconfig/query/queryCloudConfigInfo",
             "https://ind-dsu-a.shalltry.com/front/cloudconfig/consumer-not-login/cloudconfig/query/queryCloudConfigInfo"
         )
         for (u in urls) {
@@ -60,28 +64,27 @@ object MovieBoxApi {
                 c.setRequestProperty("Accept", "application/json")
                 c.setRequestProperty("User-Agent", UA)
                 c.setRequestProperty("Referer", "https://apii.inmoviebox.com/")
+                c.setRequestProperty("Origin", "https://apii.inmoviebox.com")
                 val code = c.responseCode
                 val body = (if (code in 200..299) c.inputStream else c.errorStream)
                     ?.bufferedReader()?.use { it.readText() }.orEmpty()
                 c.disconnect()
                 if (code in 200..299 && body.isNotBlank()) {
-                    // Try to extract signCookie from various JSON shapes
+                    // Deep scan for signCookie
                     val root = runCatching { JSONObject(body) }.getOrNull()
                     if (root != null) {
-                        // Deep scan for signCookie
                         val cookie = findSignCookie(root)
                         if (cookie.isNotBlank()) {
                             cachedSignCookie = cookie
-                            Log.d(TAG, "VIP config obtained, signCookie found")
+                            Log.d(TAG, "VIP config obtained, signCookie found from $u")
                             return@runCatching true
                         }
                     }
-                    // If body has signCookie directly
                     if (body.contains("signCookie")) {
                         val cookie = extractValue(body, "signCookie")
                         cachedSignCookie = cookie
                         if (cookie.isNotBlank()) {
-                            Log.d(TAG, "VIP config obtained (direct)")
+                            Log.d(TAG, "VIP config obtained (direct) from $u")
                             return@runCatching true
                         }
                     }
@@ -164,11 +167,25 @@ object MovieBoxApi {
         return try {
             val code = c.responseCode
             // Capture the JWT returned in the response so subsequent calls
-            // are sent with a proper Bearer token.
-            runCatching { c.getHeaderField("x-user") }.getOrNull()?.let { xUser ->
+            // are sent with a proper Bearer token. Try both header name
+            // variants (case-insensitive per HTTP spec but Java HttpUrl
+            // may be case-sensitive).
+            val xUser = runCatching { c.getHeaderField("x-user") }.getOrNull()
+                ?: runCatching { c.getHeaderField("X-User") }.getOrNull()
+                ?: runCatching { c.getHeaderField("X-USER") }.getOrNull()
+            xUser?.let { xUserStr ->
                 runCatching {
-                    val token = JSONObject(xUser).optString("token")
+                    val token = JSONObject(xUserStr).optString("token")
                     if (token.isNotBlank()) cachedJwt = token
+                }
+            }
+            // Also capture set-cookie header for any session cookies
+            runCatching { c.getHeaderField("set-cookie") }.getOrNull()?.let { cookie ->
+                if (cookie.contains("signCookie", ignoreCase = true)) {
+                    val m = Regex("signCookie=([^;]+)").find(cookie)
+                    m?.groupValues?.get(1)?.let { sc ->
+                        cachedSignCookie = sc
+                    }
                 }
             }
             val body = (if (code in 200..299) c.inputStream else c.errorStream)
@@ -201,10 +218,18 @@ object MovieBoxApi {
         return try {
             c.outputStream.use { it.write(body.toString().toByteArray()) }
             val code = c.responseCode
-            runCatching { c.getHeaderField("x-user") }.getOrNull()?.let { xUser ->
+            val xUser = runCatching { c.getHeaderField("x-user") }.getOrNull()
+                ?: runCatching { c.getHeaderField("X-User") }.getOrNull()
+            xUser?.let { xUserStr ->
                 runCatching {
-                    val token = JSONObject(xUser).optString("token")
+                    val token = JSONObject(xUserStr).optString("token")
                     if (token.isNotBlank()) cachedJwt = token
+                }
+            }
+            runCatching { c.getHeaderField("set-cookie") }.getOrNull()?.let { cookie ->
+                if (cookie.contains("signCookie", ignoreCase = true)) {
+                    val m = Regex("signCookie=([^;]+)").find(cookie)
+                    m?.groupValues?.get(1)?.let { sc -> cachedSignCookie = sc }
                 }
             }
             val respBody = (if (code in 200..299) c.inputStream else c.errorStream)
