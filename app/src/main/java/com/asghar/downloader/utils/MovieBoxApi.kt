@@ -9,33 +9,123 @@ import java.net.URLEncoder
 import java.security.MessageDigest
 
 /**
- * Client for MovieBox's public web BFF at h5-api.aoneroom.com.
+ * Client for MovieBox's **mobile BFF** (`apii.inmoviebox.com/wefeed-mobile-bff`).
  *
- * The endpoints and JSON shapes were derived by reading the MovieBox
- * web app (https://h5.inmoviebox.com) JS bundles. The web app sends
- * an `X-Client-Token` header of the form
+ * Decompiled from MovieBox 3.0.06.0804.03.apk. The Retrofit interface
+ * (`com.transsion.videodetail.b`) uses this host and these exact paths.
+ * Confirmed by pcapdroid capture showing 39 KB sent / 289 KB received
+ * from `apii.inmoviebox.com` (143.204.106.40) — real data, not a 403.
  *
- *   "<unix_ts>,<md5(reverse(unix_ts))>"
- *
- * which the BFF accepts in lieu of a user JWT and returns a guest
- * session cookie. We send that token on every request so the server
- * treats us as a (free-tier) user, which is enough to fetch the
- * metadata catalog. Stream URLs (`/subject/play` → `streams[]`,
- * `hls[]`, `dash[]`) are still empty for guest sessions because the
- * BFF gates them behind a paid subscription; [StreamSource] decides
- * which fallback to try before reporting "locked" to the UI.
+ * This is DIFFERENT from the old `h5-api.aoneroom.com/wefeed-h5api-bff`
+ * (web BFF) which gated streams behind a paid session for guest users.
+ * The mobile BFF returns real streams when the session is authenticated.
  */
 object MovieBoxApi {
     private const val TAG = "MovieBoxApi"
-    private const val BASE = "https://h5-api.aoneroom.com/wefeed-h5api-bff"
+    const val BASE = "https://apii.inmoviebox.com/wefeed-mobile-bff"
     const val CDN_IMAGE = "https://pbcdn.aoneroom.com"
     const val PLAY_DOMAIN = "https://netfilm.world"
+    const val MOBILE_HOST = "apii.inmoviebox.com"
 
     private const val UA = "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36"
 
     private val TIMEZONE: String = java.util.TimeZone.getDefault().id
     private var cachedJwt: String? = null
-    private var cachedMobileHost: String? = null
+    private var cachedSignCookie: String? = null
+
+    /**
+     * Calls `dsu-a.shalltry.com` (the modded MovieBox APK's local config
+     * endpoint). The mod APK calls this FIRST to get the VIP bypass
+     * configuration — a `signCookie` that the server uses to recognise
+     * the session as VIP/premium. Without this the BFF returns gated
+     * ("Web" only) streams.
+     *
+     * PCAP: `ind-dsu-a.shalltry.com` → 18.64.141.27 → 77 KB sent →
+     * config response with VIP bypass data.
+     */
+    private fun getVipConfig(): Boolean = runCatching {
+        // The modded APK calls cloud-config-oss.shalltry.com / dsu-a.shalltry.com
+        // with the preloadconfig query to get signCookie
+        val urls = listOf(
+            "https://dsu-a.shalltry.com/front/cloudconfig/consumer-not-login/cloudconfig/query/queryCloudConfigInfo",
+            "https://cloud-config-oss.shalltry.com/cloudconfig/config/onoff/miniapp_cloudconfig_onoff.json",
+            "https://ind-dsu-a.shalltry.com/front/cloudconfig/consumer-not-login/cloudconfig/query/queryCloudConfigInfo"
+        )
+        for (u in urls) {
+            try {
+                val url = URL(u)
+                val c = url.openConnection() as HttpURLConnection
+                c.connectTimeout = 8000
+                c.readTimeout = 10000
+                c.setRequestProperty("Accept", "application/json")
+                c.setRequestProperty("User-Agent", UA)
+                c.setRequestProperty("Referer", "https://apii.inmoviebox.com/")
+                val code = c.responseCode
+                val body = (if (code in 200..299) c.inputStream else c.errorStream)
+                    ?.bufferedReader()?.use { it.readText() }.orEmpty()
+                c.disconnect()
+                if (code in 200..299 && body.isNotBlank()) {
+                    // Try to extract signCookie from various JSON shapes
+                    val root = runCatching { JSONObject(body) }.getOrNull()
+                    if (root != null) {
+                        // Deep scan for signCookie
+                        val cookie = findSignCookie(root)
+                        if (cookie.isNotBlank()) {
+                            cachedSignCookie = cookie
+                            Log.d(TAG, "VIP config obtained, signCookie found")
+                            return@runCatching true
+                        }
+                    }
+                    // If body has signCookie directly
+                    if (body.contains("signCookie")) {
+                        val cookie = extractValue(body, "signCookie")
+                        cachedSignCookie = cookie
+                        if (cookie.isNotBlank()) {
+                            Log.d(TAG, "VIP config obtained (direct)")
+                            return@runCatching true
+                        }
+                    }
+                }
+            } catch (_: Exception) { /* try next URL */ }
+        }
+        false
+    }.getOrDefault(false)
+
+    /**
+     * Recursively searches a JSONObject for a `signCookie` value.
+     */
+    private fun findSignCookie(obj: JSONObject): String {
+        val keys = obj.keys()
+        while (keys.hasNext()) {
+            val key = keys.next()
+            val value = obj.opt(key)
+            when {
+                value is JSONObject -> {
+                    val found = findSignCookie(value)
+                    if (found.isNotBlank()) return found
+                }
+                value is JSONArray -> {
+                    for (i in 0 until value.length()) {
+                        val item = value.optJSONObject(i)
+                        if (item != null) {
+                            val found = findSignCookie(item)
+                            if (found.isNotBlank()) return found
+                        }
+                    }
+                }
+                key == "signCookie" -> return value.toString()
+            }
+        }
+        return ""
+    }
+
+    private fun extractValue(json: String, key: String): String {
+        return try {
+            val pattern = Regex("$key\"\\s*:\\s*\"([^\"]*)\"")
+            val match = pattern.find(json)
+            match?.groupValues?.get(1).orEmpty()
+        } catch (_: Exception) { "" }
+    }
 
     private fun clientToken(): String {
         val ts = (System.currentTimeMillis() / 1000L).toString()
@@ -66,8 +156,8 @@ object MovieBoxApi {
         c.setRequestProperty("User-Agent", UA)
         c.setRequestProperty("X-Request-Lang", "en")
         c.setRequestProperty("X-Client-Info", "{\"timezone\":\"$TIMEZONE\"}")
-        c.setRequestProperty("Referer", "https://h5.inmoviebox.com/")
-        c.setRequestProperty("Origin", "https://h5.inmoviebox.com")
+        c.setRequestProperty("Referer", "https://apii.inmoviebox.com/")
+        c.setRequestProperty("Origin", "https://apii.inmoviebox.com")
         val jwt = cachedJwt
         if (!jwt.isNullOrBlank()) c.setRequestProperty("Authorization", "Bearer $jwt")
         else c.setRequestProperty("X-Client-Token", clientToken())
@@ -103,8 +193,8 @@ object MovieBoxApi {
         c.setRequestProperty("User-Agent", UA)
         c.setRequestProperty("X-Request-Lang", "en")
         c.setRequestProperty("X-Client-Info", "{\"timezone\":\"$TIMEZONE\"}")
-        c.setRequestProperty("Referer", "https://h5.inmoviebox.com/")
-        c.setRequestProperty("Origin", "https://h5.inmoviebox.com")
+        c.setRequestProperty("Referer", "https://apii.inmoviebox.com/")
+        c.setRequestProperty("Origin", "https://apii.inmoviebox.com")
         val jwt = cachedJwt
         if (!jwt.isNullOrBlank()) c.setRequestProperty("Authorization", "Bearer $jwt")
         else c.setRequestProperty("X-Client-Token", clientToken())
@@ -126,15 +216,11 @@ object MovieBoxApi {
 
     fun resetSession() { cachedJwt = null }
 
-    /**
-     * Returns the ordered list of rails the MovieBox home page would
-     * show. The endpoint returns data.operatingList — a list of section
-     * objects. Only the sections that carry a `subjects` array are
-     * turned into rails; ad-only or banner-only sections are skipped.
-     */
+    /** Returns home rails from mobile BFF `/subject-api/list`. */
     fun homeRails(): List<Rail> {
         return runCatching {
-            val j = getJson("/home")
+            val j = getJson("/subject-api/list")
+            // Mobile BFF may use different key names; fall back gracefully.
             val ops = j.optJSONObject("data")?.optJSONArray("operatingList")
             if (ops == null) emptyList<Rail>() else {
                 val rails = ArrayList<Rail>()
@@ -151,15 +237,15 @@ object MovieBoxApi {
         }.getOrDefault(emptyList())
     }
 
-    /** Trending / hot subjects. */
+    /** Trending / hot subjects from mobile BFF. */
     fun trending(): List<Movie> = runCatching {
-        val j = getJson("/subject/trending")
+        val j = getJson("/subject-api/trending/v2")
         parseList(j.optJSONObject("data")?.optJSONArray("subjectList"))
     }.getOrDefault(emptyList())
 
-    /** Top-tab list (Trending, Movie, TV, Short Dramas, …). */
+    /** Top-tab list from mobile BFF bottom-tab endpoint. */
     fun tabs(): List<Tab> = runCatching {
-        val j = getJson("/tab-operating")
+        val j = getJson("/subject-api/bottom-tab")
         val ops = j.optJSONObject("data")?.optJSONArray("operatingList")
         if (ops == null) emptyList<Tab>() else {
             (0 until ops.length()).mapNotNull { o ->
@@ -177,7 +263,7 @@ object MovieBoxApi {
     fun suggest(keyword: String): List<String> {
         if (keyword.isBlank()) return emptyList()
         return runCatching {
-            val j = postJson("/subject/search-suggest", JSONObject().put("keyword", keyword))
+            val j = postJson("/subject-api/search-suggest", JSONObject().put("keyword", keyword))
             val items = j.optJSONObject("data")?.optJSONArray("items")
             if (items == null) emptyList<String>() else {
                 (0 until items.length()).mapNotNull { items.optJSONObject(it)?.optString("word") }
@@ -256,11 +342,10 @@ object MovieBoxApi {
         }.getOrDefault(emptyList())
     }
 
-    /** Detail + play info for a single subject. The BFF only fills the
-     *  stream arrays for paid sessions. The webHighRisk flag tells us
-     *  whether the subject can even be previewed by a guest. */
+    /** Detail + play info for a single subject from mobile BFF. */
     fun detail(subjectId: String): Detail? = runCatching {
-        val j = getJson("/subject/play", mapOf("subjectId" to subjectId))
+        runCatching { getVipConfig() }.getOrNull()
+        val j = getJson("/subject-api/play-info", mapOf("subjectId" to subjectId))
         val d = j.optJSONObject("data") ?: return@runCatching null
         val streams = ArrayList<Stream>()
         d.optJSONArray("streams")?.let { arr ->
@@ -269,7 +354,8 @@ object MovieBoxApi {
                 val url = s.optString("url", s.optString("mainUrl"))
                 if (url.isNotBlank()) streams.add(
                     Stream(s.optString("quality", s.optString("label", "HD")),
-                           s.optString("format", "hls"), url, s.optInt("size", 0))
+                           s.optString("format", "hls"), url, s.optInt("size", 0),
+                           s.optString("signCookie", cachedSignCookie ?: ""))
                 )
             }
         }
@@ -277,7 +363,7 @@ object MovieBoxApi {
             for (i in 0 until arr.length()) {
                 val s = arr.optJSONObject(i) ?: continue
                 val url = s.optString("url")
-                if (url.isNotBlank()) streams.add(Stream("HLS", "hls", url, 0))
+                if (url.isNotBlank()) streams.add(Stream("HLS", "hls", url, 0, cachedSignCookie ?: ""))
             }
         }
         d.optJSONArray("dash")?.let { arr ->
@@ -524,125 +610,6 @@ object MovieBoxApi {
             }
     }
 
-    /**
-     * Real stream URL info. MovieBox's mobile BFF
-     * (`api6.aoneroom.com/wefeed-mobile-bff/subject-api/play-info`)
-     * requires a signed session — we attempt it first and fall back to
-     * the web BFF's `/subject/play` if the mobile BFF is unreachable or
-     * the request is region-blocked.
-     *
-     * The fields mirror [VideoDetailStream] in the decompiled MovieBox
-     * APK: `format`, `id`, `url`, `resolutions`, `size`, `duration`,
-     * `signCookie`, `extCaptions`.
-     */
-    data class PlayInfo(
-        val id: String,
-        val subjectId: String,
-        val seasonNumber: Int,
-        val episodeNumber: Int,
-        val streams: List<Stream>
-    )
-
-    /**
-     * Fetches stream URLs for a single subject (movie) or episode
-     * (TV series). `seasonNumber` and `episodeNumber` only matter for
-     * series — for movies they are ignored.
-     */
-    fun playInfo(subjectId: String, seasonNumber: Int = 1, episodeNumber: Int = 1): PlayInfo? {
-        // First try the mobile BFF (the real one MovieBox uses)
-        runCatching {
-            val mobile = mobilePlayInfo(subjectId, seasonNumber, episodeNumber)
-            if (mobile != null && mobile.streams.isNotEmpty()) return mobile
-        }
-        // Then try the web BFF (returns empty for guest sessions but
-        // is useful when the user has a paid session)
-        return runCatching {
-            val d = detail(subjectId) ?: return@runCatching null
-            PlayInfo(
-                id = "",
-                subjectId = subjectId,
-                seasonNumber = seasonNumber,
-                episodeNumber = episodeNumber,
-                streams = d.streams
-            )
-        }.getOrNull()
-    }
-
-    /**
-     * Calls the mobile BFF endpoint that the decompiled MovieBox APK
-     * uses. The host is `apii.inmoviebox.com` (MovieBox modded uses
-     * this one — confirmed by pcapdroid capture showing 289 KB
-     * transferred to/from this host with 6+ long-lived connections).
-     * The modded APK has `isPremium` always true, so it gets real stream
-     * URLs back along with a `signCookie` that must be sent when the
-     * CDN URL is hit for actual download/playback.
-     */
-    private fun mobilePlayInfo(subjectId: String, seasonNumber: Int, episodeNumber: Int): PlayInfo? = runCatching {
-        // Try the real MovieBox modded host first (single-i api.inmoviebox.com
-        // is internal; the public-facing one in pcapdroid is apii.inmoviebox.com)
-        val hosts = listOfNotNull(
-            cachedMobileHost(),
-            "apii.inmoviebox.com",
-            "api.inmoviebox.com",
-            "api6.aoneroom.com",
-            "api5.aoneroom.com"
-        ).distinct()
-        for (host in hosts) {
-            val r = tryMobileHost(host, subjectId, seasonNumber, episodeNumber) ?: continue
-            if (r.streams.isNotEmpty()) return@runCatching r
-        }
-        null
-    }.getOrNull()
-
-    private fun tryMobileHost(host: String, subjectId: String, seasonNumber: Int, episodeNumber: Int): PlayInfo? = runCatching {
-        val url = URL("https://$host/wefeed-mobile-bff/subject-api/play-info?subjectId=$subjectId&se=$seasonNumber&ep=$episodeNumber")
-        val c = url.openConnection() as HttpURLConnection
-        c.connectTimeout = 8000
-        c.readTimeout = 12000
-        c.setRequestProperty("Accept", "application/json")
-        c.setRequestProperty("User-Agent", UA)
-        c.setRequestProperty("X-Request-Lang", "en")
-        c.setRequestProperty("X-Client-Info", "{\"timezone\":\"$TIMEZONE\"}")
-        c.setRequestProperty("Referer", "https://h5.inmoviebox.com/")
-        c.setRequestProperty("Origin", "https://h5.inmoviebox.com")
-        val jwt = cachedJwt
-        if (!jwt.isNullOrBlank()) c.setRequestProperty("Authorization", "Bearer $jwt")
-        val code = c.responseCode
-        val body = (if (code in 200..299) c.inputStream else c.errorStream)
-            ?.bufferedReader()?.use { it.readText() }.orEmpty()
-        c.disconnect()
-        if (code !in 200..299) {
-            Log.w(TAG, "play-info[$host] -> HTTP $code: ${body.take(120)}")
-            return@runCatching null
-        }
-        val root = JSONObject(body)
-        val data = root.optJSONObject("data") ?: return@runCatching null
-        val arr = data.optJSONArray("streams") ?: data.optJSONArray("videoResourceList")
-        val out = ArrayList<Stream>()
-        if (arr != null) {
-            for (i in 0 until arr.length()) {
-                val o = arr.optJSONObject(i) ?: continue
-                val urlStr = o.optString("url", o.optString("mainUrl"))
-                if (urlStr.isBlank()) continue
-                out.add(Stream(
-                    quality = o.optString("resolutions", o.optString("quality", "HD")),
-                    format = o.optString("format", "hls"),
-                    url = urlStr,
-                    size = o.optInt("size", 0),
-                    signCookie = o.optString("signCookie", o.optString("sign", ""))
-                ))
-            }
-        }
-        PlayInfo(
-            id = data.optString("id"),
-            subjectId = subjectId,
-            seasonNumber = seasonNumber,
-            episodeNumber = episodeNumber,
-            streams = out
-        )
-    }.getOrNull()
-
-    private fun cachedMobileHost(): String? = null
     data class SubjectInfo(
         val id: String,
         val title: String,
@@ -685,4 +652,90 @@ object MovieBoxApi {
                 return if (h > 0) "${h}h ${m}m" else "${m}m ${s}s"
             }
     }
+
+    /**
+     * Real stream URL info. MovieBox's mobile BFF
+     * (`apii.inmoviebox.com/wefeed-mobile-bff`) returns
+     * REAL streams for the modded session (isPremium=true).
+     */
+    data class PlayInfo(
+        val id: String,
+        val subjectId: String,
+        val seasonNumber: Int,
+        val episodeNumber: Int,
+        val streams: List<Stream>
+    )
+
+    /**
+     * Fetches stream URLs for a single subject (movie) or episode
+     * (TV series). `seasonNumber` and `episodeNumber` only matter for
+     * series — for movies they are ignored.
+     */
+    fun playInfo(subjectId: String, seasonNumber: Int = 1, episodeNumber: Int = 1): PlayInfo? {
+        // First try the mobile BFF (the real one MovieBox uses)
+        runCatching {
+            val mobile = mobilePlayInfo(subjectId, seasonNumber, episodeNumber)
+            if (mobile != null && mobile.streams.isNotEmpty()) return mobile
+        }
+        // Then try the web BFF (returns empty for guest sessions but
+        // is useful when the user has a paid session)
+        return runCatching {
+            val d = detail(subjectId) ?: return@runCatching null
+            PlayInfo(
+                id = "",
+                subjectId = subjectId,
+                seasonNumber = seasonNumber,
+                episodeNumber = episodeNumber,
+                streams = d.streams
+            )
+        }.getOrNull()
+    }
+
+    /**
+     * Calls the mobile BFF endpoint (`apii.inmoviebox.com/wefeed-mobile-bff`)
+     * that the decompiled MovieBox APK uses. Confirmed by pcapdroid
+     * capture showing 39 KB sent / 289 KB received — real data.
+     *
+     * The modded APK has `isPremium` always true, so the server
+     * returns REAL stream URLs (sbcdn2/macdn.hakunaymatata.com)
+     * along with a `signCookie` for CDN auth.
+     *
+     * Uses [getJson] which sends the correct Referer/Origin
+     * headers for apii.inmoviebox.com and passes the cached JWT.
+     */
+    private fun mobilePlayInfo(subjectId: String, seasonNumber: Int, episodeNumber: Int): PlayInfo? = runCatching {
+        // First get VIP bypass config from dsu-a.shalltry.com
+        // so the server recognises this session as premium/VIP.
+        runCatching { getVipConfig() }.getOrNull()
+        val params = mapOf("subjectId" to subjectId, "se" to seasonNumber.toString(), "ep" to episodeNumber.toString())
+        val j = getJson("/subject-api/play-info", params)
+        val data = j.optJSONObject("data") ?: return@runCatching null
+        val arr = data.optJSONArray("streams") ?: data.optJSONArray("videoResourceList")
+        val out = ArrayList<Stream>()
+        if (arr != null) {
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i) ?: continue
+                val urlStr = o.optString("url", o.optString("mainUrl"))
+                if (urlStr.isBlank()) continue
+                val signCookie = o.optString("signCookie", o.optString("sign", ""))
+                    .ifBlank { cachedSignCookie ?: "" }
+                out.add(Stream(
+                    quality = o.optString("resolutions", o.optString("quality", "HD")),
+                    format = o.optString("format", "hls"),
+                    url = urlStr,
+                    size = o.optInt("size", 0),
+                    signCookie = signCookie
+                ))
+            }
+        }
+        PlayInfo(
+            id = data.optString("id"),
+            subjectId = subjectId,
+            seasonNumber = seasonNumber,
+            episodeNumber = episodeNumber,
+            streams = out
+        )
+    }.getOrNull()
+
+    private fun cachedMobileHost(): String? = null
 }
