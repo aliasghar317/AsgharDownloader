@@ -77,7 +77,8 @@ class DownloadService : Service() {
         workDir: File,
         processId: String,
         isResume: Boolean,
-        previousProgress: Int = 0
+        previousProgress: Int = 0,
+        signCookie: String = ""
     ) {
         var finalTitle = "Downloading video"
         try {
@@ -105,7 +106,7 @@ class DownloadService : Service() {
             }
 
             finalTitle = DownloadStore.get(this, id)?.title ?: finalTitle
-            val request = buildRequest(url, quality, workDir)
+            val request = buildRequest(url, quality, workDir, signCookie)
             var lastUiUpdate = 0L
             YoutubeDL.getInstance().execute(request, processId) { progress, etaInSeconds, line ->
                 val now = System.currentTimeMillis()
@@ -292,8 +293,14 @@ class DownloadService : Service() {
         )
     }
 
-    private fun buildRequest(url: String, quality: String, workDir: File): YoutubeDLRequest {
+    private fun buildRequest(url: String, quality: String, workDir: File, signCookie: String = ""): YoutubeDLRequest {
         val request = YoutubeDLRequest(url)
+        // Pass signCookie as a Cookie header so the CDN
+        // recognises the session as premium/VIP.
+        if (signCookie.isNotBlank()) {
+            request.addOption("--add-header", "Cookie: signCookie=$signCookie")
+            request.addOption("--add-header", "Referer: https://apii.inmoviebox.com/")
+        }
         val h = when (quality) {
             "4k" -> 2160; "1080p" -> 1080; "720p" -> 720;
             "480p" -> 480; "360p" -> 360; "240p" -> 240; else -> 720
