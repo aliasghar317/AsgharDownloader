@@ -29,6 +29,7 @@
         <activity android:name=".YouTubeCookiesActivity" />
         <activity android:name=".MoviePlayerActivity" />
         <activity android:name=".MovieWebPlayerActivity" />
+        <activity android:name=".MovieDetailActivity" />
 
         <service
             android:name=".services.DownloadService"

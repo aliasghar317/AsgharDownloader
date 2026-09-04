@@ -319,57 +319,59 @@ class DownloadService : Service() {
         request.addOption("--fragment-retries", "20")
         request.addOption("--concurrent-fragments", "4")
         if (quality != "mp3") request.addOption("--merge-output-format", "mp4")
-        // YouTube's bot detection rotates weekly. We combine the freshest yt-dlp
-        // (nightly build) with the most permissive client order we have found to
-        // work without cookies: web_safari first, then web, then android_vr, then
-        // ios, then tv_embedded. If the user has imported cookies from the
-        // in-app YouTube login (see CookieStore) we pass them through here so the
-        // server treats us like a signed-in user.
+        // YouTube's bot detection rotates weekly. We use the freshest yt-dlp
+        // (nightly build) combined with multiple client signatures. If the user
+        // has imported cookies from a browser session, we pass them so the
+        // server treats us as a signed-in user.
         if (LinkParser.detectPlatform(url) == "YouTube") {
-            // Per the user request, prefer the android+web client pair. Both
-            // clients are known to work for plain 360p/720p downloads without
-            // a logged-in session.
+            // The mweb/android clients are no longer consistently served by YouTube.
+            // `web_safari` + `ios` together cover the freshest desktop and mobile
+            // signatures. We pass them in two separate --extractor-args calls so
+            // yt-dlp can pick the one that works without re-parsing a long string.
             request.addOption(
                 "--extractor-args",
-                "youtube:player_client=android,web,web_safari,android_vr,ios,tv_embedded;formats=missing_pot"
+                "youtube:player_client=default,web_safari,ios,android"
             )
-            // Override yt-dlp's default user-agent with a Chrome mobile one.
+            request.addOption(
+                "--extractor-args",
+                "youtube:player_skip=webpage,configs"
+            )
+            // A Chrome Windows UA is harder for YouTube's bot filter to flag
+            // during the signature-decrypt phase than a default yt-dlp UA.
             request.addOption(
                 "--user-agent",
-                "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36"
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
             )
             request.addOption(
                 "--add-header",
                 "Accept-Language:en-US,en;q=0.9"
             )
-            // Force IPv4 to avoid the rare "Errno 7" on dual-stack networks
-            // that resolve AAAA records before A records.
+            // Extra headers that YouTube checks before returning 403.
+            request.addOption("--add-header", "sec-ch-ua:\"Chromium\";v=\"131\", \"Google Chrome\";v=\"131\", \"Not-A.Brand\";v=\"99\"")
+            request.addOption("--add-header", "sec-ch-ua-mobile:?0")
+            request.addOption("--add-header", "sec-ch-ua-platform:\"Windows\"")
+            request.addOption("--add-header", "sec-fetch-dest:document")
+            request.addOption("--add-header", "sec-fetch-mode:navigate")
+            request.addOption("--add-header", "sec-fetch-site:none")
+            request.addOption("--add-header", "sec-fetch-user:?1")
+            request.addOption("--add-header", "upgrade-insecure-requests:1")
+            // Force IPv4 to avoid the rare "Errno 7" on dual-stack networks.
             request.addOption("--force-ipv4")
-            // Wider retries help with intermittent DNS / TLS timeouts on
-            // mobile networks.
+            // Wider retries help with intermittent TLS / DNS timeouts.
             request.addOption("--retries", "30")
             request.addOption("--fragment-retries", "30")
             request.addOption("--socket-timeout", "45")
-            // Imitate a normal browser by sending the Sec-Fetch-* headers
-            // that YouTube looks for.
-            request.addOption(
-                "--add-header",
-                "Sec-Fetch-Dest:document"
-            )
-            request.addOption(
-                "--add-header",
-                "Sec-Fetch-Mode:navigate"
-            )
-            request.addOption(
-                "--add-header",
-                "Sec-Fetch-Site:none"
-            )
-            request.addOption(
-                "--add-header",
-                "Sec-Fetch-User:?1"
-            )
+            // Cookies are the single biggest fix for 403 — if the user has
+            // imported them, ship them along; if not, we still attempt the
+            // public client.
             if (CookieStore.hasCookies(this)) {
                 request.addOption("--cookies", CookieStore.cookiesFile(this).absolutePath)
+            } else {
+                // No cookies imported — try to use the embedded PO token
+                // from the bundled extractor. The new yt-dlp nightly reads
+                // `youtube_pot_builtin=1` so the signature step does not
+                // require a manual visitorData cookie.
+                request.addOption("--extractor-args", "youtube:youtube_pot_builtin=1")
             }
         }
         request.addOption("-o", "${workDir.absolutePath}/%(title).200B.%(ext)s")

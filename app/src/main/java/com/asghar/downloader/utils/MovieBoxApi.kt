@@ -185,19 +185,61 @@ object MovieBoxApi {
         }.getOrDefault(emptyList())
     }
 
-    /** Search results. */
-    fun search(query: String): List<Movie> {
-        if (query.isBlank()) return emptyList()
-        return runCatching {
-            val j = getJson("/subject/everyone-search", mapOf("keyword" to query))
-            val wanted = j.optJSONObject("data")?.optJSONArray("everyoneSearch")?.let { arr ->
-                (0 until arr.length()).mapNotNull { arr.optJSONObject(it)?.optString("title") }
-            }.orEmpty()
-            val trending = trending()
-            if (wanted.isEmpty()) trending
-            else trending.filter { m -> wanted.any { m.title.contains(it, ignoreCase = true) } }
-                .ifEmpty { trending }
-        }.getOrDefault(emptyList())
+    /**
+     * Search results. The actual /subject/search endpoint on the
+     * MovieBox BFF is gated by a JWT (x-user) token. We always pass
+     * that token when it's available; if the call fails we fall back
+     * to filtering the in-memory catalog.
+     */
+    fun search(query: String, catalog: List<Movie> = emptyList()): List<Movie> {
+        val q = query.trim()
+        if (q.isBlank()) return emptyList()
+        // Try the real endpoint first
+        val remote = runCatching { searchRemote(q) }.getOrDefault(emptyList())
+        if (remote.isNotEmpty()) return remote
+        // Fall back to local filter on the cached catalog
+        return localSearch(q, catalog)
+    }
+
+    /**
+     * POST /subject/search → list of matching subject objects.
+     * Requires the JWT token in the Authorization header.
+     */
+    fun searchRemote(keyword: String, subjectType: Int = 1, page: Int = 1,
+                     perPage: Int = 30): List<Movie> = runCatching {
+        val body = JSONObject()
+            .put("keyword", keyword)
+            .put("page", page)
+            .put("perPage", perPage)
+            .put("subjectType", subjectType)
+        val j = postJson("/subject/search", body)
+        parseList(j.optJSONObject("data")?.optJSONArray("items"))
+    }.getOrDefault(emptyList())
+
+    /**
+     * Local fallback when the BFF search endpoint is unavailable.
+     * Filters the in-memory catalog by case-insensitive title match.
+     */
+    private fun localSearch(query: String, catalog: List<Movie>): List<Movie> {
+        val qL = query.lowercase()
+        val source = if (catalog.isNotEmpty()) catalog else {
+            homeRails().flatMap { it.items } + trending()
+        }
+        val seen = HashSet<String>()
+        val results = ArrayList<Movie>()
+        for (m in source) {
+            if (!seen.add(m.id)) continue
+            val titleL = m.title.lowercase()
+            if (titleL == qL ||
+                titleL.startsWith(qL) ||
+                titleL.contains(" $qL") ||
+                titleL.contains("$qL ") ||
+                titleL.contains(qL) ||
+                m.genre.lowercase().contains(qL) ||
+                m.country.lowercase().contains(qL)
+            ) results.add(m)
+        }
+        return results
     }
 
     /** Filter catalog (used by the genre chips at the top of home). */
@@ -253,16 +295,69 @@ object MovieBoxApi {
     }.getOrNull()
 
     /**
-     * Returns the netfilm.world URL where the user can stream the
-     * subject. The page itself requires login, but a WebView will at
-     * least let the user log in and then play.
+     * Full subject info from /subject/detail-rec. Includes description,
+     * subtitles list, ops (rid/esid/a/trace_id), and the netfilm.world
+     * detailPath. Use [SubjectInfo] when you want to render a detail page.
      */
-    fun detailPath(subjectId: String): String? = runCatching {
+    fun subjectInfo(subjectId: String): SubjectInfo? = runCatching {
         val j = getJson("/subject/detail-rec", mapOf("subjectId" to subjectId))
-        val items = j.optJSONObject("data")?.optJSONArray("items")
-        items?.optJSONObject(0)?.optString("detailPath")
-            ?.takeIf { it.isNotBlank() }
+        val items = j.optJSONObject("data")?.optJSONArray("items") ?: return@runCatching null
+        val o = items.optJSONObject(0) ?: return@runCatching null
+        val cover = o.optJSONObject("cover")
+        val rawCover = cover?.optString("url").orEmpty()
+        val poster = if (rawCover.startsWith("http")) rawCover
+                     else if (rawCover.isNotBlank()) "$CDN_IMAGE/$rawCover"
+                     else ""
+        val rawBackdrop = cover?.optString("backdrop")?.takeIf { it.isNotBlank() }
+            ?: o.optString("backdrop")
+        val backdrop = if (rawBackdrop.startsWith("http")) rawBackdrop
+                       else if (rawBackdrop.isNotBlank()) "$CDN_IMAGE/$rawBackdrop"
+                       else poster
+        val opsStr = o.optString("ops", "{}")
+        val ops = runCatching { JSONObject(opsStr) }.getOrDefault(JSONObject())
+        val subtitlesStr = o.optString("subtitles", "")
+        val subtitles = subtitlesStr.split(",").map { it.trim() }.filter { it.isNotBlank() }
+        val dubsArr = o.optJSONArray("dubs")
+        val dubs = dubsArr?.let { arr ->
+            (0 until arr.length()).mapNotNull { d -> dubsArr.optJSONObject(d) }
+        }.orEmpty()
+        SubjectInfo(
+            id = o.optString("subjectId"),
+            title = o.optString("title"),
+            year = o.optString("releaseDate").take(4),
+            rating = o.optString("imdbRatingValue"),
+            description = o.optString("description"),
+            duration = o.optInt("duration"),
+            genre = o.optString("genre"),
+            country = o.optString("countryName"),
+            poster = poster,
+            backdrop = backdrop,
+            type = o.optString("subjectType"),
+            corner = o.optString("corner"),
+            subtitles = subtitles,
+            detailPath = o.optString("detailPath"),
+            hasResource = o.optBoolean("hasResource", false),
+            webHighRisk = o.optBoolean("webHighRisk", false),
+            accessStrategy = o.optString("accessStrategy"),
+            ops = Ops(
+                rid = ops.optString("rid"),
+                traceId = ops.optString("trace_id"),
+                a = ops.optString("a"),
+                esid = ops.optString("esid")
+            ),
+            dubs = dubs.map { Dub(it.optString("dubId", it.optString("id")),
+                                   it.optString("dubLang"),
+                                   it.optString("dubName"),
+                                   it.optString("coverUrl", it.optString("url"))) }
+        )
     }.getOrNull()
+
+    /** Related subjects for the "More Like This" rail. */
+    fun related(subjectId: String): List<Movie> = runCatching {
+        val j = getJson("/subject/detail-rec", mapOf("subjectId" to subjectId))
+        val recs = j.optJSONObject("data")?.optJSONArray("recs")
+        parseList(recs)
+    }.getOrDefault(emptyList())
 
     private fun parseList(arr: JSONArray?): List<Movie> {
         if (arr == null) return emptyList()
@@ -314,4 +409,48 @@ object MovieBoxApi {
         val vipLocked: Boolean,
         val maxResolution: Int
     )
+    data class Ops(val rid: String, val traceId: String, val a: String, val esid: String)
+    data class Dub(val dubId: String, val dubLang: String, val dubName: String, val coverUrl: String)
+    data class SubjectInfo(
+        val id: String,
+        val title: String,
+        val year: String = "",
+        val rating: String = "",
+        val description: String = "",
+        val duration: Int = 0,
+        val genre: String = "",
+        val country: String = "",
+        val poster: String = "",
+        val backdrop: String = "",
+        val type: String = "1",
+        val corner: String = "",
+        val subtitles: List<String> = emptyList(),
+        val detailPath: String = "",
+        val hasResource: Boolean = false,
+        val webHighRisk: Boolean = false,
+        val accessStrategy: String? = null,
+        val ops: Ops = Ops("", "", "", ""),
+        val dubs: List<Dub> = emptyList()
+    ) {
+        val typeLabel: String
+            get() = when (type) {
+                "1" -> "Movie"
+                "2" -> "TV Series"
+                "3" -> "Short Film"
+                "4" -> "Anime"
+                "5" -> "Cartoon"
+                "6" -> "Music Video"
+                "9" -> "Sports"
+                else -> "Video"
+            }
+
+        val durationFormatted: String
+            get() {
+                if (duration <= 0) return ""
+                val h = duration / 3600
+                val m = (duration % 3600) / 60
+                val s = duration % 60
+                return if (h > 0) "${h}h ${m}m" else "${m}m ${s}s"
+            }
+    }
 }

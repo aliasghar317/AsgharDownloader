@@ -336,37 +336,9 @@ class MoviesActivity : AppCompatActivity() {
     }
 
     private fun onMovieClick(m: MovieBoxApi.Movie) {
-        status.text = "Loading ${m.title}…"
-        executor.execute {
-            val detail = MovieBoxApi.detail(m.id)
-            val path = MovieBoxApi.detailPath(m.id)
-            main.post {
-                // If the BFF gave us a stream URL, play it directly. Otherwise
-                // open the netfilm.world play page in a WebView so the user
-                // can log in and watch.
-                if (detail != null && detail.streams.isNotEmpty()) {
-                    val s = detail.streams.first()
-                    val i = Intent(this, MoviePlayerActivity::class.java).apply {
-                        putExtra("STREAM_URL", s.url)
-                        putExtra("TITLE", m.title)
-                        putExtra("FORMAT", s.format)
-                    }
-                    startActivity(i)
-                    return@post
-                }
-                val playUrl = if (!path.isNullOrBlank()) "$PLAY_URL$path" else null
-                if (playUrl != null) {
-                    val i = Intent(this, MovieWebPlayerActivity::class.java).apply {
-                        putExtra("PLAY_URL", playUrl)
-                        putExtra("TITLE", m.title)
-                    }
-                    startActivity(i)
-                } else {
-                    Toast.makeText(this, "\"${m.title}\" is not streamable right now", Toast.LENGTH_LONG).show()
-                    status.text = "Stream locked for \"${m.title}\""
-                }
-            }
-        }
+        startActivity(Intent(this, MovieDetailActivity::class.java).apply {
+            putExtra("SUBJECT_ID", m.id)
+        })
     }
 
     /** Cache the rails + trending so the next open paints instantly. */
