@@ -19,37 +19,66 @@ import androidx.media3.exoplayer.hls.HlsMediaSource
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.datasource.DefaultHttpDataSource
+import com.asghar.downloader.utils.MovieBoxApi
+import java.util.concurrent.Executors
 
 @UnstableApi
 class MoviePlayerActivity : AppCompatActivity() {
 
     private var player: ExoPlayer? = null
     private lateinit var titleView: TextView
+    private var resolvedUrl: String = ""
+
+    private val executor = Executors.newSingleThreadExecutor()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_movie_player)
 
-        val streamUrl = intent.getStringExtra("STREAM_URL").orEmpty()
+        val subjectId = intent.getStringExtra("SUBJECT_ID").orEmpty()
+        val season = intent.getIntExtra("SEASON", 1)
+        val episode = intent.getIntExtra("EPISODE", 1)
+        var streamUrl = intent.getStringExtra("STREAM_URL").orEmpty()
         val title = intent.getStringExtra("TITLE").orEmpty()
         titleView = findViewById(R.id.tvTitle)
         titleView.text = title
 
         findViewById<ImageButton>(R.id.btnClose).setOnClickListener { finish() }
         findViewById<Button>(R.id.btnDownload).setOnClickListener {
-            if (streamUrl.isBlank()) {
+            if (resolvedUrl.isBlank()) {
                 Toast.makeText(this, "No stream URL available", Toast.LENGTH_SHORT).show()
             } else {
-                startDownload(streamUrl, title)
+                startDownload(resolvedUrl, title)
             }
         }
 
-        if (streamUrl.isBlank()) {
+        if (streamUrl.isNotBlank()) {
+            resolvedUrl = streamUrl
+            startPlayback(streamUrl)
+        } else if (subjectId.isNotBlank()) {
+            // We were given an episode, not a stream URL — resolve it.
+            titleView.text = "$title  •  Resolving…"
+            executor.execute {
+                val info = MovieBoxApi.playInfo(subjectId, season, episode)
+                val first = info?.streams?.firstOrNull { it.url.isNotBlank() }
+                runOnUiThread {
+                    if (first == null) {
+                        Toast.makeText(this, "Stream locked. Sign in to watch.", Toast.LENGTH_LONG).show()
+                        finish()
+                    } else {
+                        resolvedUrl = first.url
+                        startPlayback(first.url)
+                    }
+                }
+            }
+        } else {
             Toast.makeText(this, "Stream URL missing", Toast.LENGTH_LONG).show()
             finish()
             return
         }
+    }
 
+    private fun startPlayback(streamUrl: String) {
         val exo = ExoPlayer.Builder(this).build()
         player = exo
         val playerView = findViewById<androidx.media3.ui.PlayerView>(R.id.playerView)

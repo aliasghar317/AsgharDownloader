@@ -25,6 +25,7 @@ import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import com.asghar.downloader.utils.CookieStore
+import com.asghar.downloader.utils.MovieBoxApi
 import com.asghar.downloader.utils.ThumbnailCache
 import java.io.BufferedReader
 import java.io.InputStreamReader
@@ -117,9 +118,11 @@ class MovieWebPlayerActivity : AppCompatActivity() {
         settings.useWideViewPort = true
         settings.loadWithOverviewMode = true
         settings.mediaPlaybackRequiresUserGesture = false
+        // Desktop UA — netfilm.world SPA returns 404 on mobile UA for
+        // some regions; desktop Chrome works on the same IPs.
         settings.userAgentString = (
-            "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 " +
-            "(KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36"
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+            "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
         )
 
         // Inject a JS interface so the WebView can tell us when the player is ready
@@ -139,14 +142,30 @@ class MovieWebPlayerActivity : AppCompatActivity() {
                 injectStreamInterceptor()
             }
 
+            override fun onReceivedError(
+                view: WebView?, errorCode: Int, description: String?, failingUrl: String?
+            ) {
+                super.onReceivedError(view, errorCode, description, failingUrl)
+                if (failingUrl == playUrl) {
+                    // First attempt to load the play page failed. Try
+                    // the home domain as a fallback.
+                    Log.w(TAG, "Play page error: $errorCode $description, trying home fallback")
+                    val home = MovieBoxApi.PLAY_DOMAIN + "/"
+                    if (playUrl != home) {
+                        playUrl = home
+                        webView.loadUrl(home)
+                    }
+                }
+            }
+
             override fun shouldInterceptRequest(
                 view: WebView?,
                 request: WebResourceRequest?
             ): WebResourceResponse? {
                 val url = request?.url?.toString().orEmpty()
-                if (url.contains(".m3u8") && m3u8Url == null) {
+                if ((url.contains(".m3u8") || url.contains(".mp4")) && m3u8Url == null) {
                     m3u8Url = url
-                    Log.d(TAG, "Found m3u8: $url")
+                    Log.d(TAG, "Found stream: $url")
                     runOnUiThread {
                         onStreamFound(url)
                     }

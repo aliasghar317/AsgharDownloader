@@ -30,6 +30,7 @@
         <activity android:name=".MoviePlayerActivity" />
         <activity android:name=".MovieWebPlayerActivity" />
         <activity android:name=".MovieDetailActivity" />
+        <activity android:name=".MovieDownloadsActivity" />
 
         <service
             android:name=".services.DownloadService"

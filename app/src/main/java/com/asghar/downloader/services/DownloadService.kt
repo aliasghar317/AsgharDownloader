@@ -324,29 +324,28 @@ class DownloadService : Service() {
         // has imported cookies from a browser session, we pass them so the
         // server treats us as a signed-in user.
         if (LinkParser.detectPlatform(url) == "YouTube") {
-            // The mweb/android clients are no longer consistently served by YouTube.
-            // `web_safari` + `ios` together cover the freshest desktop and mobile
-            // signatures. We pass them in two separate --extractor-args calls so
-            // yt-dlp can pick the one that works without re-parsing a long string.
+            // YouTube's bot detection rotates weekly. We use the freshest
+            // yt-dlp (nightly build) and the player clients that still
+            // work in October 2025. Order matters: web_safari and ios
+            // cover the freshest desktop and mobile signatures.
             request.addOption(
                 "--extractor-args",
-                "youtube:player_client=default,web_safari,ios,android"
+                "youtube:player_client=web_safari,ios,android,default"
             )
+            // Skip the heavy webpage/description download — saves a lot
+            // of time and avoids one of the 403 trigger surfaces.
             request.addOption(
                 "--extractor-args",
                 "youtube:player_skip=webpage,configs"
             )
-            // A Chrome Windows UA is harder for YouTube's bot filter to flag
-            // during the signature-decrypt phase than a default yt-dlp UA.
+            // Chrome on Windows — harder for YouTube's bot filter to flag
+            // than the default yt-dlp UA.
             request.addOption(
                 "--user-agent",
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
             )
-            request.addOption(
-                "--add-header",
-                "Accept-Language:en-US,en;q=0.9"
-            )
-            // Extra headers that YouTube checks before returning 403.
+            // Headers YouTube checks before returning 403.
+            request.addOption("--add-header", "Accept-Language:en-US,en;q=0.9")
             request.addOption("--add-header", "sec-ch-ua:\"Chromium\";v=\"131\", \"Google Chrome\";v=\"131\", \"Not-A.Brand\";v=\"99\"")
             request.addOption("--add-header", "sec-ch-ua-mobile:?0")
             request.addOption("--add-header", "sec-ch-ua-platform:\"Windows\"")
@@ -355,22 +354,22 @@ class DownloadService : Service() {
             request.addOption("--add-header", "sec-fetch-site:none")
             request.addOption("--add-header", "sec-fetch-user:?1")
             request.addOption("--add-header", "upgrade-insecure-requests:1")
-            // Force IPv4 to avoid the rare "Errno 7" on dual-stack networks.
+            // Force IPv4 to avoid the rare "Errno 7" on dual-stack
+            // networks that resolve AAAA records before A records.
             request.addOption("--force-ipv4")
-            // Wider retries help with intermittent TLS / DNS timeouts.
+            // Wider retries help with intermittent DNS / TLS timeouts
+            // on mobile networks.
             request.addOption("--retries", "30")
             request.addOption("--fragment-retries", "30")
             request.addOption("--socket-timeout", "45")
-            // Cookies are the single biggest fix for 403 — if the user has
-            // imported them, ship them along; if not, we still attempt the
-            // public client.
+            // Cookies are the single biggest fix for 403 — if the user
+            // has imported them, ship them along; if not, we still
+            // attempt the public client.
             if (CookieStore.hasCookies(this)) {
                 request.addOption("--cookies", CookieStore.cookiesFile(this).absolutePath)
             } else {
-                // No cookies imported — try to use the embedded PO token
-                // from the bundled extractor. The new yt-dlp nightly reads
-                // `youtube_pot_builtin=1` so the signature step does not
-                // require a manual visitorData cookie.
+                // No cookies imported — try the embedded PO token
+                // from the bundled extractor.
                 request.addOption("--extractor-args", "youtube:youtube_pot_builtin=1")
             }
         }

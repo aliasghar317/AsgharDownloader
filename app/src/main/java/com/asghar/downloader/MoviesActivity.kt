@@ -109,7 +109,7 @@ class MoviesActivity : AppCompatActivity() {
         swipe.setOnRefreshListener { loadHome(force = true) }
 
         findViewById<ImageButton>(R.id.btnBack).setOnClickListener { finish() }
-        findViewById<ImageButton>(R.id.btnKey).setOnClickListener { showKeyDialog() }
+        findViewById<ImageButton>(R.id.btnKey).setOnClickListener { openMovieDownloads() }
 
         search.setOnEditorActionListener { _, action, _ ->
             if (action == EditorInfo.IME_ACTION_SEARCH) {
@@ -157,6 +157,15 @@ class MoviesActivity : AppCompatActivity() {
                 Toast.makeText(this, "Saved. Reopen Movies to apply.", Toast.LENGTH_SHORT).show()
             }
             .show()
+    }
+
+    /**
+     * The download arrow in the toolbar now opens the Movies downloads
+     * list, mirroring the social-media downloads tab in MovieBox
+     * (the icon previously opened a settings dialog).
+     */
+    private fun openMovieDownloads() {
+        startActivity(Intent(this, MovieDownloadsActivity::class.java))
     }
 
     private fun loadHome(force: Boolean) {
@@ -218,12 +227,24 @@ class MoviesActivity : AppCompatActivity() {
         executor.execute {
             val results = MovieBoxApi.search(q)
             main.post {
-                val rails = if (results.isEmpty()) emptyList() else listOf(MovieBoxApi.Rail("Search results", results))
                 status.text = if (results.isEmpty()) "No results for \"$q\"" else "${results.size} results"
-                bindRails(rails, emptyList())
+                bindSearchResults(results)
                 if (results.isNotEmpty()) bindHero(results.take(5))
             }
         }
+    }
+
+    /**
+     * MovieBox-style search results: full-width list items with poster,
+     * title, year, rating, genre, country and a play button on the right.
+     */
+    private fun bindSearchResults(results: List<MovieBoxApi.Movie>) {
+        val sections = mutableListOf<Any>()
+        if (results.isNotEmpty()) {
+            sections.add(SectionHeader("Search results", isGrid = false))
+            sections.add(SearchResultList(results))
+        }
+        list.adapter = SectionAdapter(sections) { m -> onMovieClick(m) }
     }
 
     private fun bindChips(tabs: List<MovieBoxApi.Tab>) {
@@ -411,6 +432,7 @@ class MoviesActivity : AppCompatActivity() {
     private data class SectionHeader(val title: String, val isGrid: Boolean)
     private data class HorizontalRail(val items: List<MovieBoxApi.Movie>)
     private data class GridRail(val items: List<MovieBoxApi.Movie>)
+    private data class SearchResultList(val items: List<MovieBoxApi.Movie>)
 
     companion object {
         const val PLAY_URL = "https://netfilm.world/play/"
@@ -465,11 +487,13 @@ class MoviesActivity : AppCompatActivity() {
         private val TYPE_HEADER = 0
         private val TYPE_HRAIL = 1
         private val TYPE_GRAIL = 2
+        private val TYPE_SEARCH = 3
 
         override fun getItemViewType(position: Int): Int = when (items[position]) {
             is SectionHeader -> TYPE_HEADER
             is HorizontalRail -> TYPE_HRAIL
             is GridRail -> TYPE_GRAIL
+            is SearchResultList -> TYPE_SEARCH
             else -> TYPE_HEADER
         }
 
@@ -484,8 +508,15 @@ class MoviesActivity : AppCompatActivity() {
                         RecyclerView.LayoutParams.WRAP_CONTENT
                     )
                 })
-                else -> GridHolder(RecyclerView(parent.context).apply {
+                TYPE_GRAIL -> GridHolder(RecyclerView(parent.context).apply {
                     layoutManager = GridLayoutManager(parent.context, 2)
+                    layoutParams = RecyclerView.LayoutParams(
+                        RecyclerView.LayoutParams.MATCH_PARENT,
+                        RecyclerView.LayoutParams.WRAP_CONTENT
+                    )
+                })
+                else -> RailHolder(RecyclerView(parent.context).apply {
+                    layoutManager = LinearLayoutManager(parent.context)
                     layoutParams = RecyclerView.LayoutParams(
                         RecyclerView.LayoutParams.MATCH_PARENT,
                         RecyclerView.LayoutParams.WRAP_CONTENT
@@ -504,6 +535,10 @@ class MoviesActivity : AppCompatActivity() {
                 is GridRail -> {
                     val rv = (holder as GridHolder).itemView as RecyclerView
                     rv.adapter = GridAdapter(item.items, onMovieClick)
+                }
+                is SearchResultList -> {
+                    val rv = (holder as RailHolder).itemView as RecyclerView
+                    rv.adapter = SearchResultAdapter(item.items, onMovieClick)
                 }
             }
         }
@@ -562,6 +597,46 @@ class MoviesActivity : AppCompatActivity() {
             holder.rating.visibility = if (m.rating.isNotBlank()) View.VISIBLE else View.GONE
             if (m.poster.isNotBlank()) ThumbnailCache.loadInto(holder.itemView.context, m.poster, holder.poster)
             holder.itemView.setOnClickListener { onClick(m) }
+        }
+    }
+
+    /**
+     * Full-width list item for search results. Mirrors the MovieBox app
+     * (poster on the left, title / year / rating / genre / country on the
+     * right, play button).
+     */
+    private class SearchResultAdapter(
+        private val items: List<MovieBoxApi.Movie>,
+        private val onClick: (MovieBoxApi.Movie) -> Unit
+    ) : RecyclerView.Adapter<SearchResultAdapter.Holder>() {
+        class Holder(v: View) : RecyclerView.ViewHolder(v) {
+            val poster: ImageView = v.findViewById(R.id.ivPoster)
+            val title: TextView = v.findViewById(R.id.tvTitle)
+            val meta: TextView = v.findViewById(R.id.tvMeta)
+            val sub: TextView = v.findViewById(R.id.tvSub)
+            val btnPlay: Button = v.findViewById(R.id.btnPlay)
+        }
+        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): Holder {
+            val v = LayoutInflater.from(parent.context).inflate(R.layout.item_search_result, parent, false)
+            return Holder(v)
+        }
+        override fun getItemCount(): Int = items.size
+        override fun onBindViewHolder(holder: Holder, position: Int) {
+            val m = items[position]
+            holder.title.text = m.title
+            val year = m.year
+            val rating = if (m.rating.isNotBlank()) "★ ${m.rating}" else ""
+            val parts = listOfNotNull(
+                if (year.isNotBlank()) year else null,
+                if (rating.isNotBlank()) rating else null,
+                if (m.genre.isNotBlank()) m.genre else null
+            )
+            holder.meta.text = parts.joinToString(" • ")
+            holder.sub.text = if (m.country.isNotBlank()) "Country: ${m.country}" else ""
+            holder.sub.visibility = if (m.country.isNotBlank()) View.VISIBLE else View.GONE
+            if (m.poster.isNotBlank()) ThumbnailCache.loadInto(holder.itemView.context, m.poster, holder.poster)
+            holder.itemView.setOnClickListener { onClick(m) }
+            holder.btnPlay.setOnClickListener { onClick(m) }
         }
     }
 }

@@ -26,7 +26,9 @@ object DownloadStore {
         val thumbnailUrl: String = "",
         val watchedPercent: Int = 0,
         val playbackPositionMs: Long = 0L,
-        val durationMs: Long = 0L
+        val durationMs: Long = 0L,
+        val subjectId: String = "",
+        val kind: String = "movie"
     )
 
     fun all(context: Context): List<Task> {
@@ -54,7 +56,9 @@ object DownloadStore {
                     thumbnailUrl = o.optString("thumbnailUrl", ""),
                     watchedPercent = o.optInt("watchedPercent", 0),
                     playbackPositionMs = o.optLong("playbackPositionMs", 0L),
-                    durationMs = o.optLong("durationMs", 0L)
+                    durationMs = o.optLong("durationMs", 0L),
+                    subjectId = o.optString("subjectId", ""),
+                    kind = o.optString("kind", "movie")
                 )
             }
         }
@@ -97,6 +101,8 @@ object DownloadStore {
                 put("watchedPercent", t.watchedPercent)
                 put("playbackPositionMs", t.playbackPositionMs)
                 put("durationMs", t.durationMs)
+                put("subjectId", t.subjectId)
+                put("kind", t.kind)
             })
         }
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY_TASKS, arr.toString()).apply()

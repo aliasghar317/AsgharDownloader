@@ -78,9 +78,15 @@ class MovieDetailActivity : AppCompatActivity() {
     private lateinit var btnLanguageDropdown: LinearLayout
     private lateinit var tvSelectedLanguage: TextView
     private lateinit var btnPlayResource: Button
+    private lateinit var rvEpisodes: RecyclerView
+    private lateinit var tvSeasonsHeader: TextView
+    private lateinit var btnSeasonDropdown: LinearLayout
+    private lateinit var tvSelectedSeason: TextView
 
     private val availableLanguages: MutableList<String> = mutableListOf("Original Audio")
     private var selectedLanguage: String = "Original Audio"
+    private var currentSeasons: List<MovieBoxApi.Season> = emptyList()
+    private var currentSeasonIndex: Int = 0
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -109,6 +115,10 @@ class MovieDetailActivity : AppCompatActivity() {
         btnLanguageDropdown = findViewById(R.id.btnLanguageDropdown)
         tvSelectedLanguage = findViewById(R.id.tvSelectedLanguage)
         btnPlayResource = findViewById(R.id.btnPlayResource)
+        rvEpisodes = findViewById(R.id.rvEpisodes)
+        tvSeasonsHeader = findViewById(R.id.tvSeasonsHeader)
+        btnSeasonDropdown = findViewById(R.id.btnSeasonDropdown)
+        tvSelectedSeason = findViewById(R.id.tvSelectedSeason)
         progress = findViewById(R.id.progress)
         toolbar = findViewById(R.id.toolbar)
         collapsing = findViewById(R.id.collapsingToolbar)
@@ -130,6 +140,9 @@ class MovieDetailActivity : AppCompatActivity() {
             val info = MovieBoxApi.subjectInfo(subjectId)
             val related = MovieBoxApi.related(subjectId)
             val detail = MovieBoxApi.detail(subjectId)
+            val playInfo = MovieBoxApi.playInfo(subjectId)
+            val seasons = MovieBoxApi.seasons(subjectId)
+            val allDubs = MovieBoxApi.dubs(subjectId)
             runOnUiThread {
                 progress.visibility = View.GONE
                 if (info == null) {
@@ -137,13 +150,18 @@ class MovieDetailActivity : AppCompatActivity() {
                     finish(); return@runOnUiThread
                 }
                 subjectInfo = info
-                streams = detail?.streams.orEmpty()
-                bind(info, related)
+                streams = playInfo?.streams?.ifEmpty { detail?.streams.orEmpty() } ?: detail?.streams.orEmpty()
+                bind(info, related, seasons, allDubs)
             }
         }
     }
 
-    private fun bind(info: MovieBoxApi.SubjectInfo, related: List<MovieBoxApi.Movie>) {
+    private fun bind(
+        info: MovieBoxApi.SubjectInfo,
+        related: List<MovieBoxApi.Movie>,
+        seasons: List<MovieBoxApi.Season>,
+        allDubs: List<MovieBoxApi.Dub>
+    ) {
         collapsing.title = info.title
         tvTitle.text = info.title
         tvRating.text = if (info.rating.isNotBlank()) "★ ${info.rating}" else ""
@@ -165,17 +183,16 @@ class MovieDetailActivity : AppCompatActivity() {
         if (info.backdrop.isNotBlank()) ThumbnailCache.loadInto(this, info.backdrop, ivBackdrop)
         else if (info.poster.isNotBlank()) ThumbnailCache.loadInto(this, info.poster, ivBackdrop)
 
-        // Build the language list: "Original Audio" plus each dub from the
-        // BFF (the field is empty for guest sessions but the dropdown is
-        // still rendered so the user sees the same UI as MovieBox).
+        // Build the language list: every dub from the BFF, plus
+        // "Original Audio" and any language hinted at by the title's
+        // [Language] suffix. MovieBox shows all of them in the language
+        // dropdown so the user can pick before they play.
         availableLanguages.clear()
         availableLanguages.add("Original Audio")
-        if (info.dubs.isNotEmpty()) {
-            info.dubs.forEach { d ->
-                val label = d.dubName.ifBlank { d.dubLang }.ifBlank { "Dub" }
-                if (label.isNotBlank() && !availableLanguages.contains(label))
-                    availableLanguages.add(label)
-            }
+        (allDubs.ifEmpty { info.dubs }).forEach { d ->
+            val label = d.dubName.ifBlank { d.dubLang }.ifBlank { "Dub" }
+            if (label.isNotBlank() && !availableLanguages.contains(label))
+                availableLanguages.add(label)
         }
         if (availableLanguages.size == 1) {
             // BFF did not return any dubs for this title. Use the title
@@ -205,15 +222,35 @@ class MovieDetailActivity : AppCompatActivity() {
             onQualityDownload(stream)
         }
 
-        if (info.dubs.isNotEmpty()) {
+        val dubsToShow = (allDubs.ifEmpty { info.dubs })
+        if (dubsToShow.isNotEmpty()) {
             tvDubbingEmpty.visibility = View.GONE
             rvDubs.visibility = View.VISIBLE
-            rvDubs.adapter = DubbingAdapter(info.dubs) { dub ->
-                Toast.makeText(this, "Audio: ${dub.dubName}", Toast.LENGTH_SHORT).show()
+            rvDubs.adapter = DubbingAdapter(dubsToShow) { dub ->
+                val label = dub.dubName.ifBlank { dub.dubLang }
+                selectedLanguage = label
+                tvSelectedLanguage.text = label
+                Toast.makeText(this, "Audio: $label", Toast.LENGTH_SHORT).show()
             }
         } else {
             tvDubbingEmpty.visibility = View.VISIBLE
             rvDubs.visibility = View.GONE
+        }
+
+        // Series: show a Season dropdown + episode rail
+        if (seasons.isNotEmpty()) {
+            tvSeasonsHeader.visibility = View.VISIBLE
+            rvEpisodes.visibility = View.VISIBLE
+            btnSeasonDropdown.visibility = View.VISIBLE
+            tvSelectedSeason.text = seasons.first().title
+            currentSeasons = seasons
+            currentSeasonIndex = 0
+            bindEpisodes(seasons.first().episodes)
+            btnSeasonDropdown.setOnClickListener { showSeasonSheet() }
+        } else {
+            tvSeasonsHeader.visibility = View.GONE
+            rvEpisodes.visibility = View.GONE
+            btnSeasonDropdown.visibility = View.GONE
         }
 
         rvRelated.adapter = RelatedAdapter(related) { m ->
@@ -221,6 +258,45 @@ class MovieDetailActivity : AppCompatActivity() {
                 .putExtra("SUBJECT_ID", m.id)
             startActivity(i)
         }
+    }
+
+    private fun bindEpisodes(episodes: List<MovieBoxApi.Episode>) {
+        rvEpisodes.layoutManager = LinearLayoutManager(this, LinearLayoutManager.HORIZONTAL, false)
+        rvEpisodes.adapter = EpisodeAdapter(episodes) { ep ->
+            onPlayEpisode(ep)
+        }
+    }
+
+    private fun showSeasonSheet() {
+        val seasons = currentSeasons
+        if (seasons.isEmpty()) return
+        val sheet = BottomSheetDialog(this)
+        val view = layoutInflater.inflate(R.layout.sheet_seasons, null)
+        val rv = view.findViewById<RecyclerView>(R.id.rvSeasons)
+        view.findViewById<ImageButton>(R.id.btnCloseSeasons).setOnClickListener { sheet.dismiss() }
+        rv.layoutManager = LinearLayoutManager(this)
+        rv.adapter = SeasonAdapter(seasons, currentSeasonIndex) { idx, s ->
+            currentSeasonIndex = idx
+            tvSelectedSeason.text = s.title
+            bindEpisodes(s.episodes)
+            sheet.dismiss()
+        }
+        sheet.setContentView(view)
+        sheet.show()
+    }
+
+    private fun onPlayEpisode(ep: MovieBoxApi.Episode) {
+        val info = subjectInfo ?: return
+        val i = Intent(this, MoviePlayerActivity::class.java).apply {
+            putExtra("STREAM_URL", "")  // resolved at play time
+            putExtra("TITLE", "${info.title} - ${ep.title}")
+            putExtra("FORMAT", "hls")
+            putExtra("SUBJECT_ID", info.id)
+            putExtra("SEASON", ep.seasonNumber)
+            putExtra("EPISODE", ep.number)
+            putExtra("EPISODE_ID", ep.id)
+        }
+        startActivity(i)
     }
 
     private fun onPlay() {
@@ -519,6 +595,62 @@ class MovieDetailActivity : AppCompatActivity() {
                 if (isSelected) 0xFF10B981.toInt() else 0xFFFFFFFF.toInt()
             )
             holder.itemView.setOnClickListener { onClick(lang) }
+        }
+    }
+
+    /**
+     * Vertical list of seasons. Mirrors the MovieBox dropdown — each
+     * row is tappable and shows the season number.
+     */
+    private class SeasonAdapter(
+        private val items: List<MovieBoxApi.Season>,
+        private val selected: Int,
+        private val onClick: (Int, MovieBoxApi.Season) -> Unit
+    ) : RecyclerView.Adapter<SeasonAdapter.Holder>() {
+        class Holder(v: View) : RecyclerView.ViewHolder(v) {
+            val tvSeason: TextView = v.findViewById(R.id.tvSeasonName)
+        }
+        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): Holder {
+            val v = LayoutInflater.from(parent.context).inflate(R.layout.item_season, parent, false)
+            return Holder(v)
+        }
+        override fun getItemCount(): Int = items.size
+        override fun onBindViewHolder(holder: Holder, position: Int) {
+            val s = items[position]
+            holder.tvSeason.text = s.title
+            val isSel = position == selected
+            holder.tvSeason.setTextColor(
+                if (isSel) 0xFF10B981.toInt() else 0xFFFFFFFF.toInt()
+            )
+            holder.itemView.setOnClickListener { onClick(position, s) }
+        }
+    }
+
+    /**
+     * Horizontal rail of episode cards (poster + number + duration).
+     * Tapping one plays that specific episode via the MoviePlayer.
+     */
+    private class EpisodeAdapter(
+        private val items: List<MovieBoxApi.Episode>,
+        private val onClick: (MovieBoxApi.Episode) -> Unit
+    ) : RecyclerView.Adapter<EpisodeAdapter.Holder>() {
+        class Holder(v: View) : RecyclerView.ViewHolder(v) {
+            val iv: ImageView = v.findViewById(R.id.ivEpisode)
+            val tvNum: TextView = v.findViewById(R.id.tvEpisodeNum)
+            val tvDur: TextView = v.findViewById(R.id.tvEpisodeDur)
+        }
+        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): Holder {
+            val v = LayoutInflater.from(parent.context).inflate(R.layout.item_episode, parent, false)
+            return Holder(v)
+        }
+        override fun getItemCount(): Int = items.size
+        override fun onBindViewHolder(holder: Holder, position: Int) {
+            val ep = items[position]
+            val num = if (ep.number > 0) ep.number.toString().padStart(2, '0') else (position + 1).toString().padStart(2, '0')
+            holder.tvNum.text = num
+            holder.tvDur.text = ep.durationFormatted.ifBlank { "—" }
+            if (ep.thumbnail.isNotBlank()) ThumbnailCache.loadInto(holder.itemView.context, ep.thumbnail, holder.iv)
+            holder.itemView.setOnClickListener { onClick(ep) }
         }
     }
 }
